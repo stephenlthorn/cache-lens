@@ -1,5 +1,31 @@
 const el = (id) => document.getElementById(id);
 
+// ─── Page navigation ───────────────────────────────────────────────────────
+
+const pageTabs = document.querySelectorAll('.page-tab');
+const analyzeActions = el('analyzeActions');
+
+function switchPage(pageId) {
+  document.querySelectorAll('.page-content').forEach(p => p.classList.add('hidden'));
+  pageTabs.forEach(t => t.classList.toggle('page-tab--active', t.dataset.page === pageId));
+  const target = el(`page-${pageId}`);
+  if (target) target.classList.remove('hidden');
+
+  analyzeActions.style.display = (pageId === 'analyze') ? '' : 'none';
+
+  if (pageId === 'dashboard') initDashboard();
+  if (pageId === 'recommendations') loadRecommendations();
+}
+
+pageTabs.forEach(tab => {
+  tab.addEventListener('click', () => switchPage(tab.dataset.page));
+});
+
+// Start on dashboard
+switchPage('dashboard');
+
+// ─── Analyze page elements ─────────────────────────────────────────────────
+
 const input = el('input');
 const analyzeBtn = el('analyze');
 const loadExampleBtn = el('loadExample');
@@ -36,7 +62,6 @@ const optimizedOut = el('optimizedOut');
 const copyOptimized = el('copyOptimized');
 
 const repeats = el('repeats');
-
 const errorBox = el('error');
 
 let lastResult = null;
@@ -45,6 +70,11 @@ let activeTab = 'optimized';
 function fmtInt(n) {
   if (typeof n !== 'number') return '—';
   return n.toLocaleString();
+}
+
+function fmtCost(n) {
+  if (typeof n !== 'number') return '—';
+  return `$${n.toFixed(4)}`;
 }
 
 function clamp(n, a, b) { return Math.min(b, Math.max(a, n)); }
@@ -232,7 +262,6 @@ function renderResult(res) {
   exportBtn.disabled = false;
   newBtn.classList.remove('hidden');
 
-  // top score card
   scoreLabel.textContent = res.cacheability_label || '—';
   scoreGauge.innerHTML = gaugeSvg(res.cacheability_score ?? 0);
 
@@ -252,12 +281,9 @@ function renderResult(res) {
   sugMeta.textContent = `${res.suggestions?.length ?? 0} suggestion(s)`;
   renderSuggestions(res.suggestions);
 
-  // optimized structure tabs
   setOptimizedOutput();
-
   renderRepeats(res.repeated_blocks);
 
-  // show results
   resultsView.classList.remove('hidden');
   inputView.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
@@ -270,7 +296,6 @@ function setOptimizedOutput() {
 
   if (activeTab === 'raw') {
     optimizedOut.textContent = lastResult.raw_content ? lastResult.raw_content : (lastResult && lastResult.input_type ? '(raw input not available)' : '');
-    // In our API we do not return raw_content; fall back to input box.
     optimizedOut.textContent = input.value;
     copyOptimized.textContent = 'Copy';
     return;
@@ -352,7 +377,7 @@ async function handleFiles(files) {
   analyzeBtn.disabled = input.value.trim().length === 0;
 }
 
-// Events
+// Events — Analyze page
 input.addEventListener('input', () => {
   updateInputMeta();
   analyzeBtn.disabled = input.value.trim().length === 0;
@@ -375,7 +400,6 @@ fileInput.addEventListener('change', async (e) => {
   fileInput.value = '';
 });
 
-// Drag and drop
 ['dragenter','dragover'].forEach(evt => {
   drop.addEventListener(evt, (e) => {
     e.preventDefault();
@@ -398,7 +422,6 @@ drop.addEventListener('drop', async (e) => {
   }
 });
 
-// Tabs
 document.querySelectorAll('.tab').forEach((b) => {
   b.addEventListener('click', () => {
     activeTab = b.dataset.tab;
@@ -414,6 +437,486 @@ copyOptimized.addEventListener('click', async () => {
   setTimeout(() => copyOptimized.textContent = 'Copy', 900);
 });
 
-// init
+// init analyze page state
 updateInputMeta();
 setLoading(false);
+
+// ─── Dashboard ─────────────────────────────────────────────────────────────
+
+let tokenChart = null;
+let dashboardInitialized = false;
+let currentChartRange = 30;
+
+function initDashboard() {
+  if (dashboardInitialized) return;
+  dashboardInitialized = true;
+  loadKPIs();
+  loadTokenChart(currentChartRange);
+  loadProviderBreakdown();
+  loadSourceBreakdown();
+  connectLiveFeed();
+
+  document.querySelectorAll('#chartToggle .tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#chartToggle .tab').forEach(b => b.classList.remove('tab--active'));
+      btn.classList.add('tab--active');
+      currentChartRange = parseInt(btn.dataset.range, 10);
+      loadTokenChart(currentChartRange);
+    });
+  });
+}
+
+async function loadKPIs() {
+  const periods = [
+    { days: 1, label: 'Today' },
+    { days: 7, label: 'Last 7 days' },
+    { days: 30, label: 'Last 30 days' },
+    { days: 365, label: 'Last 365 days' },
+  ];
+  for (const p of periods) {
+    try {
+      const r = await fetch(`/api/usage/kpi?days=${p.days}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const kpiEl = el(`kpi-${p.days}`);
+      if (kpiEl) kpiEl.textContent = fmtCost(data.total_cost_usd);
+    } catch {
+      const kpiEl = el(`kpi-${p.days}`);
+      if (kpiEl) kpiEl.textContent = '—';
+    }
+  }
+}
+
+async function loadTokenChart(days) {
+  try {
+    const r = await fetch(`/api/usage/daily?days=${days}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const rows = await r.json();
+    renderTokenChart(rows);
+  } catch {
+    // silently leave chart empty
+  }
+}
+
+function renderTokenChart(rows) {
+  const canvas = el('tokenChart');
+  if (!canvas) return;
+
+  const labels = rows.map(r => r.date || r.day || '');
+  const inputData = rows.map(r => r.input_tokens || 0);
+  const cacheData = rows.map(r => r.cache_read_tokens || 0);
+  const outputData = rows.map(r => r.output_tokens || 0);
+
+  if (tokenChart) {
+    tokenChart.destroy();
+    tokenChart = null;
+  }
+
+  tokenChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Input',
+          data: inputData,
+          backgroundColor: 'rgba(124,92,255,0.65)',
+          borderRadius: 4,
+        },
+        {
+          label: 'Cache Read',
+          data: cacheData,
+          backgroundColor: 'rgba(46,233,166,0.65)',
+          borderRadius: 4,
+        },
+        {
+          label: 'Output',
+          data: outputData,
+          backgroundColor: 'rgba(255,176,32,0.65)',
+          borderRadius: 4,
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          labels: { color: 'rgba(231,237,246,0.85)', font: { size: 12 } }
+        }
+      },
+      scales: {
+        x: {
+          stacked: false,
+          ticks: { color: 'rgba(154,167,184,0.9)', maxRotation: 45 },
+          grid: { color: 'rgba(255,255,255,0.06)' }
+        },
+        y: {
+          ticks: { color: 'rgba(154,167,184,0.9)' },
+          grid: { color: 'rgba(255,255,255,0.06)' }
+        }
+      }
+    }
+  });
+}
+
+async function loadProviderBreakdown() {
+  const tbody = el('providerBody');
+  if (!tbody) return;
+  try {
+    const r = await fetch('/api/usage/daily?days=365');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const rows = await r.json();
+
+    const byProvider = {};
+    for (const row of rows) {
+      const prov = row.provider || 'unknown';
+      if (!byProvider[prov]) byProvider[prov] = { calls: 0, cost: 0 };
+      byProvider[prov].calls += row.calls || 0;
+      byProvider[prov].cost += row.total_cost_usd || 0;
+    }
+
+    const sorted = Object.entries(byProvider).sort((a, b) => b[1].cost - a[1].cost);
+    if (sorted.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="table-empty">No data.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = sorted.map(([prov, d]) =>
+      `<tr><td>${escapeHtml(prov)}</td><td>${fmtInt(d.calls)}</td><td>${fmtCost(d.cost)}</td></tr>`
+    ).join('');
+  } catch {
+    tbody.innerHTML = '<tr><td colspan="3" class="table-empty">Failed to load.</td></tr>';
+  }
+}
+
+async function loadSourceBreakdown() {
+  const tbody = el('sourceBody');
+  if (!tbody) return;
+  try {
+    const r = await fetch('/api/usage/daily?days=365');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const rows = await r.json();
+
+    const bySource = {};
+    for (const row of rows) {
+      const src = row.source || 'unknown';
+      if (!bySource[src]) bySource[src] = { calls: 0, cost: 0 };
+      bySource[src].calls += row.calls || 0;
+      bySource[src].cost += row.total_cost_usd || 0;
+    }
+
+    const sorted = Object.entries(bySource).sort((a, b) => b[1].cost - a[1].cost);
+    if (sorted.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="table-empty">No data.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = sorted.map(([src, d]) =>
+      `<tr><td>${escapeHtml(src)}</td><td>${fmtInt(d.calls)}</td><td>${fmtCost(d.cost)}</td></tr>`
+    ).join('');
+  } catch {
+    tbody.innerHTML = '<tr><td colspan="3" class="table-empty">Failed to load.</td></tr>';
+  }
+}
+
+// ─── Live Feed ──────────────────────────────────────────────────────────────
+
+const LIVE_FEED_MAX_ROWS = 50;
+let liveFeedEmpty = true;
+
+function connectLiveFeed() {
+  const statusEl = el('liveFeedStatus');
+  let reconnectDelay = 1000;
+  let ws = null;
+
+  function connect() {
+    if (ws) {
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.close();
+    }
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/api/live`);
+
+    if (statusEl) statusEl.textContent = 'Connecting…';
+
+    ws.onopen = () => {
+      if (statusEl) statusEl.textContent = 'Live';
+      reconnectDelay = 1000;
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        addLiveFeedRow(data);
+        reconnectDelay = 1000;
+      } catch {
+        // ignore parse errors
+      }
+    };
+
+    ws.onclose = () => {
+      if (statusEl) statusEl.textContent = `Reconnecting in ${Math.round(reconnectDelay / 1000)}s…`;
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+    };
+
+    ws.onerror = () => ws.close();
+  }
+
+  connect();
+}
+
+function addLiveFeedRow(data) {
+  const tbody = el('liveFeedBody');
+  if (!tbody) return;
+
+  if (liveFeedEmpty) {
+    tbody.innerHTML = '';
+    liveFeedEmpty = false;
+  }
+
+  const time = data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+  const tr = document.createElement('tr');
+  tr.className = 'live-feed-row-new';
+  tr.innerHTML = `
+    <td>${escapeHtml(time)}</td>
+    <td>${escapeHtml(data.provider || '—')}</td>
+    <td class="mono-sm">${escapeHtml(data.model || '—')}</td>
+    <td>${escapeHtml(data.source || '—')}</td>
+    <td>${fmtInt(data.input_tokens)}</td>
+    <td>${fmtInt(data.cache_read_tokens)}</td>
+    <td>${fmtInt(data.output_tokens)}</td>
+    <td>${fmtCost(data.cost_usd)}</td>
+  `;
+  tbody.insertBefore(tr, tbody.firstChild);
+
+  // Remove old rows beyond limit
+  while (tbody.rows.length > LIVE_FEED_MAX_ROWS) {
+    tbody.removeChild(tbody.lastChild);
+  }
+
+  // Fade-in animation cleanup
+  setTimeout(() => tr.classList.remove('live-feed-row-new'), 600);
+}
+
+// ─── Deep Dive ─────────────────────────────────────────────────────────────
+
+let deepDiveData = [];
+let deepDiveSortCol = 'date';
+let deepDiveSortAsc = true;
+
+el('applyFilters').addEventListener('click', loadDeepDive);
+
+async function loadDeepDive() {
+  const from = el('filterFrom').value;
+  const to = el('filterTo').value;
+  const provider = el('filterProvider').value;
+  const model = el('filterModel').value.trim().toLowerCase();
+  const source = el('filterSource').value.trim().toLowerCase();
+
+  const meta = el('deepDiveMeta');
+  if (meta) meta.textContent = 'Loading…';
+
+  try {
+    const params = new URLSearchParams({ days: 365 });
+    const r = await fetch(`/api/usage/daily?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    let rows = await r.json();
+
+    // Client-side filtering
+    rows = rows.filter(row => {
+      if (from && row.date < from) return false;
+      if (to && row.date > to) return false;
+      if (provider && row.provider !== provider) return false;
+      if (model && !(row.model || '').toLowerCase().includes(model)) return false;
+      if (source && !(row.source || '').toLowerCase().includes(source)) return false;
+      return true;
+    });
+
+    deepDiveData = rows.map(row => {
+      const cacheRead = row.cache_read_tokens || 0;
+      const inputTok = row.input_tokens || 0;
+      const denom = cacheRead + inputTok;
+      return {
+        ...row,
+        cache_hit_pct: denom > 0 ? (cacheRead / denom) * 100 : 0,
+      };
+    });
+
+    if (meta) meta.textContent = `${deepDiveData.length} row(s)`;
+    renderDeepDiveTable();
+    renderCacheEfficiency();
+
+    // Populate provider dropdown from actual data
+    populateProviderFilter(rows);
+  } catch (err) {
+    if (meta) meta.textContent = 'Error loading data';
+    el('deepDiveBody').innerHTML = `<tr><td colspan="10" class="table-empty">Failed: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+function populateProviderFilter(rows) {
+  const sel = el('filterProvider');
+  if (!sel) return;
+  const existing = new Set(Array.from(sel.options).map(o => o.value).filter(Boolean));
+  const providers = [...new Set(rows.map(r => r.provider).filter(Boolean))];
+  for (const prov of providers) {
+    if (!existing.has(prov)) {
+      const opt = document.createElement('option');
+      opt.value = prov;
+      opt.textContent = prov;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+function renderDeepDiveTable() {
+  const tbody = el('deepDiveBody');
+  if (!tbody) return;
+
+  const sorted = [...deepDiveData].sort((a, b) => {
+    const va = a[deepDiveSortCol] ?? '';
+    const vb = b[deepDiveSortCol] ?? '';
+    const result = va < vb ? -1 : va > vb ? 1 : 0;
+    return deepDiveSortAsc ? result : -result;
+  });
+
+  if (sorted.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="table-empty">No records match the filters.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = sorted.map(row => `
+    <tr>
+      <td>${escapeHtml(row.date || '—')}</td>
+      <td>${escapeHtml(row.provider || '—')}</td>
+      <td class="mono-sm">${escapeHtml(row.model || '—')}</td>
+      <td>${escapeHtml(row.source || '—')}</td>
+      <td>${fmtInt(row.calls)}</td>
+      <td>${fmtInt(row.input_tokens)}</td>
+      <td>${fmtInt(row.cache_read_tokens)}</td>
+      <td>${row.cache_hit_pct != null ? row.cache_hit_pct.toFixed(1) + '%' : '—'}</td>
+      <td>${fmtInt(row.output_tokens)}</td>
+      <td>${fmtCost(row.total_cost_usd)}</td>
+    </tr>
+  `).join('');
+}
+
+function renderCacheEfficiency() {
+  const tbody = el('cacheEfficiencyBody');
+  if (!tbody) return;
+
+  const anthropicRows = deepDiveData.filter(r => (r.provider || '').toLowerCase() === 'anthropic');
+  if (anthropicRows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="table-empty">No Anthropic rows in current filter.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = anthropicRows.map(row => {
+    const hitPct = row.cache_hit_pct != null ? row.cache_hit_pct.toFixed(1) + '%' : '—';
+    const hitClass = row.cache_hit_pct >= 50 ? 'hit-good' : row.cache_hit_pct >= 20 ? 'hit-ok' : 'hit-poor';
+    return `
+      <tr>
+        <td>${escapeHtml(row.date || '—')}</td>
+        <td class="mono-sm">${escapeHtml(row.model || '—')}</td>
+        <td>${escapeHtml(row.source || '—')}</td>
+        <td>${fmtInt(row.input_tokens)}</td>
+        <td>${fmtInt(row.cache_read_tokens)}</td>
+        <td><span class="hit-badge ${hitClass}">${hitPct}</span></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// Sortable column headers
+document.querySelectorAll('#deepDiveTable th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (deepDiveSortCol === col) {
+      deepDiveSortAsc = !deepDiveSortAsc;
+    } else {
+      deepDiveSortCol = col;
+      deepDiveSortAsc = true;
+    }
+
+    document.querySelectorAll('#deepDiveTable th.sortable').forEach(h => {
+      const icon = h.querySelector('.sort-icon');
+      if (!icon) return;
+      if (h.dataset.col === col) {
+        icon.textContent = deepDiveSortAsc ? '↑' : '↓';
+      } else {
+        icon.textContent = '↕';
+      }
+    });
+
+    renderDeepDiveTable();
+  });
+});
+
+// ─── Recommendations ───────────────────────────────────────────────────────
+
+async function loadRecommendations() {
+  const container = el('recommendationsContent');
+  if (!container) return;
+  container.innerHTML = '<div class="table-empty">Loading…</div>';
+
+  try {
+    const r = await fetch('/api/usage/recommendations');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const recs = await r.json();
+
+    if (!recs || recs.length === 0) {
+      container.innerHTML = '<div class="rec-empty">No recommendations — your usage looks optimal!</div>';
+      return;
+    }
+
+    container.innerHTML = recs.map((rec, i) => {
+      const impactClass = rec.estimated_impact === 'high' ? 'impact-high'
+        : rec.estimated_impact === 'medium' ? 'impact-medium'
+        : 'impact-low';
+      const impactLabel = rec.estimated_impact || 'low';
+
+      const deepDiveLink = rec.deep_dive_link
+        ? `<a href="#" class="rec-link" data-filter="${escapeHtml(JSON.stringify(rec.deep_dive_link))}">View in Deep Dive →</a>`
+        : '';
+
+      return `
+        <div class="rec-card">
+          <div class="rec-card__header">
+            <div class="rec-rank">#${i + 1}</div>
+            <div class="rec-title">${escapeHtml(rec.title || 'Recommendation')}</div>
+            <span class="impact-badge ${impactClass}">${escapeHtml(impactLabel)}</span>
+          </div>
+          <div class="rec-desc">${escapeHtml(rec.description || '')}</div>
+          ${deepDiveLink}
+        </div>
+      `;
+    }).join('');
+
+    // Wire up deep-dive links
+    container.querySelectorAll('.rec-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        try {
+          const filters = JSON.parse(link.dataset.filter);
+          applyDeepDiveFilters(filters);
+          switchPage('deepdive');
+        } catch {
+          switchPage('deepdive');
+        }
+      });
+    });
+  } catch (err) {
+    container.innerHTML = `<div class="table-empty">Failed to load recommendations: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function applyDeepDiveFilters(filters) {
+  if (filters.provider) el('filterProvider').value = filters.provider;
+  if (filters.model) el('filterModel').value = filters.model;
+  if (filters.source) el('filterSource').value = filters.source;
+  if (filters.from) el('filterFrom').value = filters.from;
+  if (filters.to) el('filterTo').value = filters.to;
+  loadDeepDive();
+}

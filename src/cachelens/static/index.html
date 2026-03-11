@@ -6,6 +6,7 @@
   <title>CacheLens</title>
   <meta name="color-scheme" content="dark" />
   <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <div class="bg" aria-hidden="true"></div>
@@ -16,11 +17,18 @@
         <div class="brand__mark" aria-hidden="true"></div>
         <div class="brand__text">
           <div class="brand__name">CacheLens</div>
-          <div class="brand__tag">Token waste & cacheability analysis — local-first</div>
+          <div class="brand__tag">Token waste &amp; cacheability analysis — local-first</div>
         </div>
       </div>
 
-      <div class="topbar__actions">
+      <nav class="page-tabs" aria-label="Main navigation">
+        <button class="page-tab page-tab--active" data-page="dashboard">Dashboard</button>
+        <button class="page-tab" data-page="deepdive">Deep Dive</button>
+        <button class="page-tab" data-page="recommendations">Recommendations</button>
+        <button class="page-tab" data-page="analyze">Analyze</button>
+      </nav>
+
+      <div class="topbar__actions" id="analyzeActions">
         <button id="loadExample" class="btn btn--ghost">Load example</button>
         <label class="btn btn--ghost file">
           <input id="file" type="file" accept=".json,.jsonl,.txt,application/json,text/plain" hidden />
@@ -35,116 +43,304 @@
   </header>
 
   <main class="container">
-    <section id="inputView" class="panel">
-      <div class="panel__header">
-        <h2>Input</h2>
-        <div class="meta" id="inputMeta">0 characters</div>
-      </div>
 
-      <div id="drop" class="drop">
-        <textarea id="input" class="textarea" spellcheck="false" placeholder="Paste a prompt, prompt chain, or JSON trace…\n\nSupports:\n- raw text\n- { \"messages\": [...] }\n- { \"calls\": [...] }\n"></textarea>
-        <div class="drop__hint">Tip: you can drag & drop a .json or .txt file here.</div>
-      </div>
+    <!-- PAGE: Dashboard -->
+    <div id="page-dashboard" class="page-content">
 
-      <div class="row row--split">
-        <div class="hint">
-          No data leaves your machine. Analysis is deterministic (rules-based).
-        </div>
-        <div class="row">
-          <button id="exportJson" class="btn btn--ghost" disabled>Export JSON</button>
-          <button id="newAnalysis" class="btn btn--ghost hidden">New analysis</button>
-        </div>
-      </div>
-    </section>
-
-    <section id="resultsView" class="grid hidden" aria-live="polite">
-      <div class="card card--score">
+      <!-- Live Feed Strip -->
+      <div class="card card--wide live-feed-card">
         <div class="card__header">
-          <h3>Cacheability</h3>
-          <div class="meta" id="scoreLabel">—</div>
+          <h3>Live Feed</h3>
+          <div class="meta" id="liveFeedStatus">Connecting…</div>
+        </div>
+        <div id="liveFeedTable" class="live-feed-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Provider</th>
+                <th>Model</th>
+                <th>Source</th>
+                <th>Input</th>
+                <th>Cache Read</th>
+                <th>Output</th>
+                <th>Cost</th>
+              </tr>
+            </thead>
+            <tbody id="liveFeedBody">
+              <tr><td colspan="8" class="table-empty">Waiting for calls…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- KPI Cards -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Today</div>
+          <div class="kpi-value" id="kpi-1">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Last 7 Days</div>
+          <div class="kpi-value" id="kpi-7">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Last 30 Days</div>
+          <div class="kpi-value" id="kpi-30">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Last 365 Days</div>
+          <div class="kpi-value" id="kpi-365">—</div>
+        </div>
+      </div>
+
+      <!-- Token Volume Chart -->
+      <div class="card card--wide">
+        <div class="card__header">
+          <h3>Token Volume</h3>
+          <div class="row" id="chartToggle">
+            <button class="tab tab--active" data-range="7">7d</button>
+            <button class="tab" data-range="30">30d</button>
+            <button class="tab" data-range="90">90d</button>
+            <button class="tab" data-range="365">365d</button>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="tokenChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Bottom row: Provider breakdown + Source breakdown -->
+      <div class="dash-bottom">
+        <div class="card">
+          <div class="card__header">
+            <h3>Cost by Provider</h3>
+          </div>
+          <table class="data-table" id="providerTable">
+            <thead><tr><th>Provider</th><th>Calls</th><th>Total Cost</th></tr></thead>
+            <tbody id="providerBody">
+              <tr><td colspan="3" class="table-empty">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
+          <div class="card__header">
+            <h3>Cost by Source</h3>
+          </div>
+          <table class="data-table" id="sourceTable">
+            <thead><tr><th>Source</th><th>Calls</th><th>Total Cost</th></tr></thead>
+            <tbody id="sourceBody">
+              <tr><td colspan="3" class="table-empty">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAGE: Deep Dive -->
+    <div id="page-deepdive" class="page-content hidden">
+
+      <div class="filter-bar">
+        <div class="filter-group">
+          <label class="filter-label">From</label>
+          <input type="date" id="filterFrom" class="filter-input" />
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">To</label>
+          <input type="date" id="filterTo" class="filter-input" />
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Provider</label>
+          <select id="filterProvider" class="filter-input filter-select">
+            <option value="">All providers</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Model</label>
+          <input type="text" id="filterModel" class="filter-input" placeholder="e.g. claude-3-5" />
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">Source</label>
+          <input type="text" id="filterSource" class="filter-input" placeholder="e.g. my-app" />
+        </div>
+        <button id="applyFilters" class="btn btn--primary">Apply</button>
+      </div>
+
+      <div class="card card--wide">
+        <div class="card__header">
+          <h3>Usage Records</h3>
+          <div class="meta" id="deepDiveMeta">—</div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table sortable-table" id="deepDiveTable">
+            <thead>
+              <tr>
+                <th data-col="date" class="sortable">Date <span class="sort-icon">↕</span></th>
+                <th data-col="provider" class="sortable">Provider <span class="sort-icon">↕</span></th>
+                <th data-col="model" class="sortable">Model <span class="sort-icon">↕</span></th>
+                <th data-col="source" class="sortable">Source <span class="sort-icon">↕</span></th>
+                <th data-col="calls" class="sortable">Calls <span class="sort-icon">↕</span></th>
+                <th data-col="input_tokens" class="sortable">Input <span class="sort-icon">↕</span></th>
+                <th data-col="cache_read_tokens" class="sortable">Cache Read <span class="sort-icon">↕</span></th>
+                <th data-col="cache_hit_pct" class="sortable">Hit % <span class="sort-icon">↕</span></th>
+                <th data-col="output_tokens" class="sortable">Output <span class="sort-icon">↕</span></th>
+                <th data-col="total_cost_usd" class="sortable">Cost <span class="sort-icon">↕</span></th>
+              </tr>
+            </thead>
+            <tbody id="deepDiveBody">
+              <tr><td colspan="10" class="table-empty">Apply filters to load data.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Cache Efficiency (Anthropic only) -->
+      <div class="card card--wide" id="cacheEfficiencyCard">
+        <div class="card__header">
+          <h3>Cache Efficiency — Anthropic</h3>
+          <div class="meta">cache_read_tokens / (cache_read_tokens + input_tokens) × 100</div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Model</th>
+                <th>Source</th>
+                <th>Input Tokens</th>
+                <th>Cache Read</th>
+                <th>Cache Hit %</th>
+              </tr>
+            </thead>
+            <tbody id="cacheEfficiencyBody">
+              <tr><td colspan="6" class="table-empty">No Anthropic data loaded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAGE: Recommendations -->
+    <div id="page-recommendations" class="page-content hidden">
+      <div id="recommendationsContent">
+        <div class="table-empty">Loading recommendations…</div>
+      </div>
+    </div>
+
+    <!-- PAGE: Analyze (existing — unchanged) -->
+    <div id="page-analyze" class="page-content hidden">
+      <section id="inputView" class="panel">
+        <div class="panel__header">
+          <h2>Input</h2>
+          <div class="meta" id="inputMeta">0 characters</div>
         </div>
 
-        <div class="score">
-          <div id="scoreGauge" class="score__gauge"></div>
-          <div class="score__stats">
-            <div class="kv">
-              <div class="kv__k">Total input</div>
-              <div class="kv__v" id="totalInput">—</div>
+        <div id="drop" class="drop">
+          <textarea id="input" class="textarea" spellcheck="false" placeholder="Paste a prompt, prompt chain, or JSON trace…&#10;&#10;Supports:&#10;- raw text&#10;- { &quot;messages&quot;: [...] }&#10;- { &quot;calls&quot;: [...] }&#10;"></textarea>
+          <div class="drop__hint">Tip: you can drag &amp; drop a .json or .txt file here.</div>
+        </div>
+
+        <div class="row row--split">
+          <div class="hint">
+            No data leaves your machine. Analysis is deterministic (rules-based).
+          </div>
+          <div class="row">
+            <button id="exportJson" class="btn btn--ghost" disabled>Export JSON</button>
+            <button id="newAnalysis" class="btn btn--ghost hidden">New analysis</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="resultsView" class="grid hidden" aria-live="polite">
+        <div class="card card--score">
+          <div class="card__header">
+            <h3>Cacheability</h3>
+            <div class="meta" id="scoreLabel">—</div>
+          </div>
+
+          <div class="score">
+            <div id="scoreGauge" class="score__gauge"></div>
+            <div class="score__stats">
+              <div class="kv">
+                <div class="kv__k">Total input</div>
+                <div class="kv__v" id="totalInput">—</div>
+              </div>
+              <div class="kv">
+                <div class="kv__k">Estimated waste</div>
+                <div class="kv__v" id="wastePct">—</div>
+              </div>
+              <div class="kv">
+                <div class="kv__k">Top driver</div>
+                <div class="kv__v" id="topDriver">—</div>
+              </div>
             </div>
-            <div class="kv">
-              <div class="kv__k">Estimated waste</div>
-              <div class="kv__v" id="wastePct">—</div>
-            </div>
-            <div class="kv">
-              <div class="kv__k">Top driver</div>
-              <div class="kv__v" id="topDriver">—</div>
-            </div>
+          </div>
+
+          <div class="score__breakdown" id="breakdown"></div>
+        </div>
+
+        <div class="card">
+          <div class="card__header">
+            <h3>Top waste sources</h3>
+            <div class="meta" id="wasteMeta">—</div>
+          </div>
+          <ol id="wasteSources" class="list"></ol>
+        </div>
+
+        <div class="card">
+          <div class="card__header">
+            <h3>Static vs dynamic</h3>
+            <div class="meta" id="sdMeta">—</div>
+          </div>
+          <div class="bar">
+            <div class="bar__seg bar__seg--static" id="barStatic"></div>
+            <div class="bar__seg bar__seg--dynamic" id="barDynamic"></div>
+          </div>
+          <div class="row row--split" style="margin-top:10px">
+            <div class="pill">Static: <span id="staticPct">—</span></div>
+            <div class="pill pill--warm">Dynamic: <span id="dynamicPct">—</span></div>
           </div>
         </div>
 
-        <div class="score__breakdown" id="breakdown"></div>
-      </div>
+        <div class="card card--wide">
+          <div class="card__header">
+            <h3>Suggestions</h3>
+            <div class="meta" id="sugMeta">—</div>
+          </div>
+          <div id="suggestions" class="stack"></div>
+        </div>
 
-      <div class="card">
-        <div class="card__header">
-          <h3>Top waste sources</h3>
-          <div class="meta" id="wasteMeta">—</div>
+        <div class="card card--wide">
+          <div class="card__header">
+            <h3>Optimized structure</h3>
+            <div class="meta">Copy/paste into your agent loop</div>
+          </div>
+          <div class="tabs">
+            <button class="tab tab--active" data-tab="optimized">Optimized</button>
+            <button class="tab" data-tab="raw">Original</button>
+            <div class="tabs__spacer"></div>
+            <button id="copyOptimized" class="btn btn--ghost btn--sm">Copy</button>
+          </div>
+          <pre class="code" id="optimizedOut"></pre>
         </div>
-        <ol id="wasteSources" class="list"></ol>
-      </div>
 
-      <div class="card">
-        <div class="card__header">
-          <h3>Static vs dynamic</h3>
-          <div class="meta" id="sdMeta">—</div>
+        <div class="card card--wide">
+          <div class="card__header">
+            <h3>Repeated blocks</h3>
+            <div class="meta">Largest duplicates ranked by wasted tokens</div>
+          </div>
+          <div id="repeats" class="stack"></div>
         </div>
-        <div class="bar">
-          <div class="bar__seg bar__seg--static" id="barStatic"></div>
-          <div class="bar__seg bar__seg--dynamic" id="barDynamic"></div>
-        </div>
-        <div class="row row--split" style="margin-top:10px">
-          <div class="pill">Static: <span id="staticPct">—</span></div>
-          <div class="pill pill--warm">Dynamic: <span id="dynamicPct">—</span></div>
-        </div>
-      </div>
 
-      <div class="card card--wide">
-        <div class="card__header">
-          <h3>Suggestions</h3>
-          <div class="meta" id="sugMeta">—</div>
-        </div>
-        <div id="suggestions" class="stack"></div>
-      </div>
+        <div id="error" class="alert hidden"></div>
+      </section>
+    </div>
 
-      <div class="card card--wide">
-        <div class="card__header">
-          <h3>Optimized structure</h3>
-          <div class="meta">Copy/paste into your agent loop</div>
-        </div>
-        <div class="tabs">
-          <button class="tab tab--active" data-tab="optimized">Optimized</button>
-          <button class="tab" data-tab="raw">Original</button>
-          <div class="tabs__spacer"></div>
-          <button id="copyOptimized" class="btn btn--ghost btn--sm">Copy</button>
-        </div>
-        <pre class="code" id="optimizedOut"></pre>
-      </div>
-
-      <div class="card card--wide">
-        <div class="card__header">
-          <h3>Repeated blocks</h3>
-          <div class="meta">Largest duplicates ranked by wasted tokens</div>
-        </div>
-        <div id="repeats" class="stack"></div>
-      </div>
-
-      <div id="error" class="alert hidden"></div>
-    </section>
   </main>
 
   <footer class="footer">
     <div class="container footer__inner">
-      <span>CacheLens MVP</span>
+      <span>CacheLens</span>
       <span class="dot">•</span>
       <span>Local-only, no telemetry</span>
     </div>
