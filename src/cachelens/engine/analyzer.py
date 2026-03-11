@@ -5,7 +5,8 @@ from .repeats import find_repeated_blocks
 from .scorer import cacheability_score
 from .waste import build_waste_summary
 from .suggestions import build_suggestions
-from ..models import AnalysisInput, AnalysisResult, InputSummary, StaticDynamicBreakdown, WasteSummary
+from .classifier import classify_static_dynamic
+from ..models import AnalysisInput, AnalysisResult, InputSummary, WasteSummary
 
 
 def analyze(inp: AnalysisInput, min_tokens: int = 50) -> AnalysisResult:
@@ -24,13 +25,8 @@ def analyze(inp: AnalysisInput, min_tokens: int = 50) -> AnalysisResult:
 
     repeated = find_repeated_blocks(inp, counter=counter, min_tokens=min_tokens)
 
-    # Placeholder static/dynamic until classifier lands
-    static_dynamic = StaticDynamicBreakdown(
-        total_static_tokens=0,
-        total_dynamic_tokens=total_tokens,
-        static_percentage=0.0,
-        sections=[],
-    )
+    # Static/dynamic classification
+    static_dynamic = classify_static_dynamic(inp)
 
     score, score_breakdown, label = cacheability_score(inp, repeated, static_dynamic)
 
