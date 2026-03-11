@@ -81,6 +81,8 @@ The proxy strips `/proxy/<provider>[/<tag>]` and forwards the remainder of the p
 
 Detected sources are normalized to canonical names via a pattern table in `detector.py`. User-Agent patterns map to a fixed canonical string regardless of version — e.g. any `claude-code/*` → `claude-code`, any `python-httpx/*` → `python-httpx`. This prevents fragmentation in aggregation tables when tool versions change. The pattern table is bundled and extensible via config.
 
+**Canonicalization fallback:** URL tags bypass User-Agent pattern matching — if a URL tag is present and valid, `source` = the sanitized tag value as-is (not looked up in the pattern table). If no tag, User-Agent, or `X-CacheLens-Source` header produces a match, `source` = `"unknown"`.
+
 ### `source` vs `source_tag` columns
 
 - `source_tag`: the raw URL tag string as provided in the path (nullable — null if no tag was in the URL, or if the tag was fully sanitized away with no valid characters remaining). The original invalid string is not stored.
@@ -158,6 +160,8 @@ Populated from a bundled `pricing.json` file (updated with releases). User overr
 
 ### Cost calculation
 
+**Pricing lookup:** The provider is always known from the proxy endpoint path (`/proxy/anthropic/...` → `anthropic`). The lookup key is `(provider, model)` where model comes from the response body. If the exact model is not found in `pricing`, fall back to `<provider>/default`.
+
 `cost_usd` in `calls` is computed at record time using the `pricing` table. `daily_agg.cost_usd` and `yearly_agg.cost_usd` are computed as `SUM(cost_usd)` from the source rows — never recomputed from token counts. Historical costs reflect the pricing data at the time each call was recorded. Pricing changes are not retroactively applied.
 
 ### `pricing_overrides.toml` format
@@ -200,7 +204,7 @@ Both rollup jobs run as **asyncio background tasks** inside the daemon. All time
 | Nightly | 00:05 local time daily | Aggregate yesterday → `daily_agg`, purge raw calls > 1 day old |
 | Yearly | 00:10 local time on Jan 1 | Aggregate prior year's `daily_agg` → `yearly_agg`, purge `daily_agg` rows > 365 days old |
 
-**Missed rollup recovery:** On startup, the daemon checks the `rollups` bookkeeping table. If a nightly rollup for any date in the past 7 days is absent, it runs immediately. If the daemon has been offline for more than 7 days, raw calls older than 1 day are already purged — those dates gap silently in `daily_agg`. This is accepted data loss. If the yearly rollup for the prior year is absent and the current date is Jan 2 or later, it runs immediately.
+**Missed rollup recovery:** On startup, the daemon checks the `rollups` bookkeeping table for gaps — it does not unconditionally re-run. Only dates absent from the table trigger a recovery run. If a nightly rollup for any date in the past 7 days is absent, it runs immediately. If the daemon has been offline for more than 7 days, raw calls older than 1 day are already purged — those dates gap silently in `daily_agg`. This is accepted data loss. If the yearly rollup for the prior year is absent and the current date is Jan 2 or later, it runs immediately.
 
 **Yearly rollup re-aggregation:** The yearly rollup always re-aggregates from scratch — it queries `SUM` over all `daily_agg` rows for the target year and does `INSERT OR REPLACE`. It does not accumulate. This means re-running it after additional daily rows are added produces the correct total.
 
@@ -247,7 +251,7 @@ aggregate = true
 ```
 
 - A call is **recorded and emitted** only when the upstream returns a successful (2xx) response containing usage metadata. Failed upstream responses (4xx/5xx) and interrupted calls are silently discarded — not recorded.
-- For streaming responses (Anthropic SSE, OpenAI `stream=true`): the proxy passes chunks through to the client immediately (no buffering). Usage metadata is parsed from the final chunk in-flight. Anthropic: usage is in the `message_delta` event's `usage` field. OpenAI: usage is in the final `data:` object before `[DONE]`. If the stream is interrupted before usage metadata arrives, the call is discarded.
+- For streaming responses (Anthropic SSE, OpenAI `stream=true`): the proxy passes chunks through to the client immediately (no buffering). Usage metadata is parsed from the final chunk in-flight. Anthropic: usage is in the `message_delta` event's `usage` field. OpenAI: usage is in the final `data:` object before `[DONE]`. "Interrupted" means any exception raised during stream processing, including client disconnect and upstream TCP reset — the implementation wraps stream processing in try/except and discards the call if usage metadata was not successfully extracted before the exception.
 - WebSocket message is emitted after usage metadata is parsed — this may be slightly after the last byte is delivered to the client. Acceptable latency.
 - No subscription model — all connected clients receive all events
 - Maximum 10 concurrent WebSocket connections. Additional connections beyond 10 are rejected with HTTP 503.
@@ -297,7 +301,7 @@ cachelens status [--format json]  # daemon status
 ### `cachelens install` steps
 
 1. Create `~/.cachelens/` with default `config.toml`
-2. Write LaunchAgent plist at `~/Library/LaunchAgents/com.cachelens.plist` (macOS) or systemd user service at `~/.config/systemd/user/cachelens.service` (Linux)
+2. Write LaunchAgent plist at `~/Library/LaunchAgents/com.cachelens.plist` (macOS) or **systemd user service** at `~/.config/systemd/user/cachelens.service` (Linux — user-level, not system-level, so no root required)
 3. Set env vars in shell config files (`~/.zshrc`, `~/.bashrc`, `~/.profile` as applicable) **and** via `launchctl setenv` on macOS (covers GUI apps and agents that don't source shell files)
 4. Start daemon immediately — no reboot required
 5. Print a clear summary of every file written and every env var set
