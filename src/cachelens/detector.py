@@ -24,10 +24,12 @@ MAX_TAG_LEN = 64
 # not source tags.
 VERSION_SEGMENT_RE = re.compile(r"^v\d")
 
-KNOWN_PROVIDERS = {"anthropic", "openai", "google"}
+KNOWN_PROVIDERS: frozenset[str] = frozenset({"anthropic", "openai", "google"})
 
 # User-Agent pattern → canonical source name.
 # Patterns are matched as prefix; order matters (more specific first).
+# Matching is case-sensitive. Both common casings are listed explicitly
+# for SDKs that vary (e.g. claude-code vs Claude-Code).
 UA_PATTERNS: list[tuple[str, str]] = [
     ("claude-code/", "claude-code"),
     ("Claude-Code/", "claude-code"),
@@ -50,7 +52,8 @@ class ParsedProxy(NamedTuple):
 def sanitize_tag(raw: str) -> str | None:
     """Strip invalid characters and truncate to MAX_TAG_LEN.
 
-    Returns None if nothing valid remains after stripping.
+    Invalid characters are stripped first, then the result is truncated to
+    MAX_TAG_LEN characters. Returns None if nothing valid remains after stripping.
     """
     cleaned = VALID_TAG_RE.sub("", raw)[:MAX_TAG_LEN]
     return cleaned if cleaned else None
@@ -85,6 +88,14 @@ def parse_proxy_path(
 
     Returns None if the path doesn't match the expected structure or the
     provider is not in KNOWN_PROVIDERS.
+
+    Tag disambiguation: if the segment after the provider consists solely of
+    alphanumeric characters and hyphens (but does NOT look like an API version
+    such as v1/v2), it is treated as a tag candidate. If the candidate
+    sanitizes to a non-empty string it becomes source_tag. If it sanitizes to
+    empty (e.g. "!!!"), the segment is silently consumed and the remaining path
+    is used as the upstream path unchanged — invalid tag segments are never
+    forwarded to the provider.
 
     headers: optional dict of request headers used for source detection.
     """
@@ -129,8 +140,8 @@ def parse_proxy_path(
             source_tag = candidate
             upstream_segments = remaining[1:]
         else:
-            # Fully sanitized away — no tag, whole remainder is upstream
-            upstream_segments = remaining
+            # Fully sanitized away — consume the invalid segment, don't forward it
+            upstream_segments = remaining[1:]
     else:
         upstream_segments = remaining
 

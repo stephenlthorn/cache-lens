@@ -148,6 +148,15 @@ def test_parse_with_tag_my_app() -> None:
     assert result.upstream_path == "/v1/chat/completions"
 
 
+def test_parse_single_segment_after_provider_is_upstream_not_tag() -> None:
+    # /proxy/anthropic/my-tag — only one segment after provider, treated as
+    # upstream path (tags require at least one more segment after them)
+    result = parse_proxy_path("/proxy/anthropic/my-tag")
+    assert result is not None
+    assert result.source_tag is None
+    assert result.upstream_path == "/my-tag"
+
+
 # ---------------------------------------------------------------------------
 # Tag disambiguation: v1 is NOT a tag
 # ---------------------------------------------------------------------------
@@ -173,11 +182,12 @@ def test_parse_v2_segment_is_upstream_not_tag() -> None:
 
 
 def test_parse_fully_invalid_tag_falls_back_to_unknown() -> None:
-    # "!!!" sanitizes to "" → no tag, no UA → unknown
+    # "!!!" sanitizes to "" → no tag, segment consumed, no UA → unknown
     result = parse_proxy_path("/proxy/anthropic/!!!/v1/messages")
     assert result is not None
     assert result.source_tag is None
     assert result.source == "unknown"
+    assert result.upstream_path == "/v1/messages"
 
 
 def test_parse_partially_invalid_tag_sanitized() -> None:
