@@ -1,0 +1,26 @@
+[project]
+name = "cachelens"
+version = "0.1.0"
+description = "Local-first CLI + web UI to analyze prompts and traces for token waste and cacheability."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Stephen Thorn" }]
+
+dependencies = [
+  "click>=8.1.7",
+  "pydantic>=2.6.0",
+  "tiktoken>=0.7.0",
+  "fastapi>=0.110.0",
+  "uvicorn>=0.27.0",
+]
+
+[project.scripts]
+cachelens = "cachelens.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.22.0"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,20 @@
+{
+  "calls": [
+    {
+      "call_id": "c1",
+      "model": "gpt-x",
+      "messages": [
+        {"role": "system", "content": "You are a helpful assistant.\n\nAlways respond in JSON."},
+        {"role": "user", "content": "Summarize: Hello world"}
+      ]
+    },
+    {
+      "call_id": "c2",
+      "model": "gpt-x",
+      "messages": [
+        {"role": "system", "content": "You are a helpful assistant.\n\nAlways respond in JSON."},
+        {"role": "user", "content": "Summarize: Another input"}
+      ]
+    }
+  ]
+}

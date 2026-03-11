@@ -1,0 +1,14 @@
+:root { --bg: #0b0f14; --fg: #e6edf3; --muted: #9aa4af; --card: #111826; --primary: #3b82f6; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: ui-sans-serif, system-ui; background: var(--bg); color: var(--fg); }
+.container { max-width: 900px; margin: 0 auto; padding: 24px; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+textarea { width: 100%; min-height: 280px; resize: vertical; padding: 12px; border-radius: 10px; border: 1px solid #243044; background: var(--card); color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.row { display: flex; justify-content: flex-end; margin-top: 12px; }
+button { border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+button.primary { background: var(--primary); color: white; }
+button.secondary { background: #22314a; color: var(--fg); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+pre { background: var(--card); padding: 12px; border-radius: 10px; overflow: auto; }
+.hint { color: var(--muted); }
+.hidden { display: none; }
