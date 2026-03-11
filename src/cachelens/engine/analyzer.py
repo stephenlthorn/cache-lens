@@ -31,8 +31,12 @@ def analyze(inp: AnalysisInput, min_tokens: int = 50) -> AnalysisResult:
 
     score, score_breakdown, label = cacheability_score(inp, repeated, static_dynamic)
 
-    waste_summary = build_waste_summary(total_input_tokens=total_tokens, repeated_blocks=repeated)
-    suggestions = build_suggestions(inp, repeated, waste_summary)
+    waste_summary = build_waste_summary(
+        total_input_tokens=total_tokens,
+        repeated_blocks=repeated,
+        static_dynamic_sections=static_dynamic.sections,
+    )
+    suggestions = build_suggestions(inp, repeated, waste_summary, static_dynamic)
     optimized_structure = build_optimized_structure(inp, repeated, counter)
 
     return AnalysisResult(
