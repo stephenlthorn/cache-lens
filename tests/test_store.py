@@ -1,25 +1,46 @@
 import time
+from datetime import datetime, timezone
+
 import pytest
 from cachelens.store import UsageStore
+
 
 @pytest.fixture
 def store(tmp_path):
     return UsageStore(db_path=tmp_path / "test.db")
 
-def test_insert_call_and_retrieve_today(store):
+
+def _insert_call(store, *, ts=None, provider="anthropic", model="claude-sonnet-4-6",
+                 source="claude-code", source_tag=None, input_tokens=100, output_tokens=50,
+                 cache_read_tokens=0, cache_write_tokens=0, cost_usd=0.001,
+                 endpoint="/v1/messages", request_hash="sha256:abc123"):
     store.insert_call(
-        ts=int(time.time()),
-        provider="anthropic", model="claude-sonnet-4-6",
-        source="claude-code", source_tag=None,
-        input_tokens=100, output_tokens=50,
-        cache_read_tokens=0, cache_write_tokens=0,
-        cost_usd=0.001, endpoint="/v1/messages",
-        request_hash="sha256:abc123",
+        ts=ts if ts is not None else int(time.time()),
+        provider=provider, model=model, source=source, source_tag=source_tag,
+        input_tokens=input_tokens, output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens, cache_write_tokens=cache_write_tokens,
+        cost_usd=cost_usd, endpoint=endpoint, request_hash=request_hash,
     )
-    rows = store.raw_calls_today()
-    assert len(rows) == 1
-    assert rows[0]["provider"] == "anthropic"
-    assert rows[0]["source"] == "claude-code"
+
+
+def test_insert_call_and_retrieve_today(store):
+    _insert_call(store)
+    count = store.raw_calls_today()
+    assert count == 1
+
+
+def test_raw_calls_today_returns_int(store):
+    assert isinstance(store.raw_calls_today(), int)
+    _insert_call(store, request_hash="sha256:a")
+    _insert_call(store, request_hash="sha256:b")
+    assert store.raw_calls_today() == 2
+
+
+def test_raw_calls_today_excludes_old(store):
+    old_ts = int(time.time()) - 2 * 86400
+    _insert_call(store, ts=old_ts, request_hash="sha256:old")
+    assert store.raw_calls_today() == 0
+
 
 def test_daily_agg_upsert(store):
     store.upsert_daily_agg(
@@ -39,6 +60,7 @@ def test_daily_agg_upsert(store):
     assert len(rows) == 1
     assert rows[0]["call_count"] == 10
 
+
 def test_yearly_agg_upsert(store):
     store.upsert_yearly_agg(
         year=2025, provider="openai", model="gpt-4o",
@@ -50,26 +72,124 @@ def test_yearly_agg_upsert(store):
     assert len(rows) == 1
     assert rows[0]["model"] == "gpt-4o"
 
+
 def test_purge_raw_calls_older_than(store):
     old_ts = int(time.time()) - 2 * 86400  # 2 days ago
-    store.insert_call(ts=old_ts, provider="anthropic", model="x",
-        source="y", source_tag=None, input_tokens=1, output_tokens=1,
-        cache_read_tokens=0, cache_write_tokens=0, cost_usd=0.0,
-        endpoint="/v1/messages", request_hash="sha256:old")
+    _insert_call(store, ts=old_ts, request_hash="sha256:old")
     store.purge_raw_calls_older_than_days(1)
-    assert store.raw_calls_today() == []
+    assert store.raw_calls_today() == 0
+
 
 def test_rollup_bookkeeping(store):
     assert not store.rollup_done("nightly", "2026-03-10")
     store.mark_rollup_done("nightly", "2026-03-10")
     assert store.rollup_done("nightly", "2026-03-10")
 
-def test_kpi_rolling(store):
+
+def test_kpi_rolling_keys(store):
     now = int(time.time())
-    store.insert_call(ts=now, provider="anthropic", model="claude-sonnet-4-6",
-        source="claude-code", source_tag=None, input_tokens=100, output_tokens=50,
-        cache_read_tokens=0, cache_write_tokens=0, cost_usd=0.001,
-        endpoint="/v1/messages", request_hash="sha256:x")
+    _insert_call(store, ts=now, input_tokens=100, output_tokens=50,
+                 cache_read_tokens=20, cache_write_tokens=10, cost_usd=0.001,
+                 request_hash="sha256:x")
     kpi = store.kpi_rolling(days=1)
-    assert kpi["cost_usd"] == pytest.approx(0.001)
+    assert kpi["total_cost_usd"] == pytest.approx(0.001)
     assert kpi["call_count"] == 1
+    assert kpi["input_tokens"] == 100
+    assert kpi["output_tokens"] == 50
+    assert kpi["cache_read_tokens"] == 20
+    assert kpi["cache_write_tokens"] == 10
+
+
+def test_kpi_rolling_empty(store):
+    kpi = store.kpi_rolling(days=1)
+    assert kpi["total_cost_usd"] == 0.0
+    assert kpi["call_count"] == 0
+    assert kpi["cache_read_tokens"] == 0
+    assert kpi["cache_write_tokens"] == 0
+
+
+def test_purge_daily_agg_older_than_days(store):
+    store.upsert_daily_agg(
+        date="2020-01-01", provider="anthropic", model="claude-sonnet-4-6",
+        source="claude-code", call_count=1, input_tokens=100,
+        output_tokens=50, cache_read_tokens=0, cache_write_tokens=0,
+        cost_usd=0.001,
+    )
+    store.upsert_daily_agg(
+        date="2099-12-31", provider="anthropic", model="claude-sonnet-4-6",
+        source="claude-code", call_count=1, input_tokens=100,
+        output_tokens=50, cache_read_tokens=0, cache_write_tokens=0,
+        cost_usd=0.001,
+    )
+    store.purge_daily_agg_older_than_days(1)
+    assert store.daily_agg_for_date("2020-01-01") == []
+    assert len(store.daily_agg_for_date("2099-12-31")) == 1
+
+
+def test_aggregate_calls_for_date(store):
+    day_ts = 1735689600  # 2025-01-01 00:00:00 UTC
+    _insert_call(store, ts=day_ts + 100, provider="anthropic", model="claude-sonnet-4-6",
+                 source="app", input_tokens=200, output_tokens=100,
+                 cache_read_tokens=50, cache_write_tokens=25, cost_usd=0.002,
+                 request_hash="sha256:1")
+    _insert_call(store, ts=day_ts + 200, provider="anthropic", model="claude-sonnet-4-6",
+                 source="app", input_tokens=300, output_tokens=150,
+                 cache_read_tokens=0, cache_write_tokens=0, cost_usd=0.003,
+                 request_hash="sha256:2")
+    rows = store.aggregate_calls_for_date("2025-01-01")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["call_count"] == 2
+    assert row["input_tokens"] == 500
+    assert row["output_tokens"] == 250
+    assert row["cache_read_tokens"] == 50
+    assert row["cache_write_tokens"] == 25
+    assert row["cost_usd"] == pytest.approx(0.005)
+
+
+def test_aggregate_daily_for_year(store):
+    store.upsert_daily_agg(
+        date="2025-01-15", provider="openai", model="gpt-4o",
+        source="app", call_count=3, input_tokens=300,
+        output_tokens=150, cache_read_tokens=0, cache_write_tokens=0,
+        cost_usd=0.03,
+    )
+    store.upsert_daily_agg(
+        date="2025-06-20", provider="openai", model="gpt-4o",
+        source="app", call_count=7, input_tokens=700,
+        output_tokens=350, cache_read_tokens=100, cache_write_tokens=50,
+        cost_usd=0.07,
+    )
+    rows = store.aggregate_daily_for_year(2025)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["call_count"] == 10
+    assert row["input_tokens"] == 1000
+    assert row["cache_read_tokens"] == 100
+    assert row["cache_write_tokens"] == 50
+
+
+def test_last_rollup_time_none_when_no_rollup(store):
+    result = store.last_rollup_time("nightly")
+    assert result is None
+
+
+def test_last_rollup_time_returns_datetime(store):
+    before = datetime.now(tz=timezone.utc).replace(microsecond=0)
+    store.mark_rollup_done("nightly", "2026-03-10")
+    result = store.last_rollup_time("nightly")
+    assert isinstance(result, datetime)
+    assert result >= before
+    assert result.tzinfo is not None
+
+
+def test_db_size_bytes(store):
+    size = store.db_size_bytes()
+    assert isinstance(size, int)
+    assert size > 0
+
+
+def test_db_size_bytes_nonexistent(tmp_path):
+    s = UsageStore.__new__(UsageStore)
+    s._path = tmp_path / "nonexistent.db"
+    assert s.db_size_bytes() == 0

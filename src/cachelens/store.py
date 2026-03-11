@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -83,12 +84,12 @@ class UsageStore:
         )
         self._con.commit()
 
-    def raw_calls_today(self) -> list[dict[str, Any]]:
+    def raw_calls_today(self) -> int:
         day_start = int(time.time()) - 86400
-        rows = self._con.execute(
-            "SELECT * FROM calls WHERE ts >= ?", (day_start,)
-        ).fetchall()
-        return [dict(r) for r in rows]
+        row = self._con.execute(
+            "SELECT COUNT(*) FROM calls WHERE ts >= ?", (day_start,)
+        ).fetchone()
+        return row[0] if row else 0
 
     def upsert_daily_agg(self, *, date: str, provider: str, model: str,
                           source: str, call_count: int, input_tokens: int,
@@ -184,26 +185,32 @@ class UsageStore:
     def kpi_rolling(self, days: int) -> dict[str, Any]:
         cutoff = int(time.time()) - days * 86400
         row = self._con.execute(
-            """SELECT COUNT(*) as call_count, COALESCE(SUM(cost_usd),0) as cost_usd,
+            """SELECT COUNT(*) as call_count,
+               COALESCE(SUM(cost_usd),0) as total_cost_usd,
                COALESCE(SUM(input_tokens),0) as input_tokens,
-               COALESCE(SUM(output_tokens),0) as output_tokens
+               COALESCE(SUM(output_tokens),0) as output_tokens,
+               COALESCE(SUM(cache_read_tokens),0) as cache_read_tokens,
+               COALESCE(SUM(cache_write_tokens),0) as cache_write_tokens
                FROM calls WHERE ts >= ?""",
             (cutoff,),
         ).fetchone()
-        return dict(row) if row else {"call_count": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0}
+        return dict(row) if row else {
+            "call_count": 0, "total_cost_usd": 0.0,
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_read_tokens": 0, "cache_write_tokens": 0,
+        }
 
     def db_size_bytes(self) -> int:
         return self._path.stat().st_size if self._path.exists() else 0
 
-    def last_rollup_time(self, job: str) -> str | None:
+    def last_rollup_time(self, job: str) -> datetime | None:
         row = self._con.execute(
             "SELECT completed_at FROM rollups WHERE job=? ORDER BY completed_at DESC LIMIT 1",
             (job,),
         ).fetchone()
         if not row:
             return None
-        from datetime import datetime, timezone
-        return datetime.fromtimestamp(row[0], tz=timezone.utc).isoformat()
+        return datetime.fromtimestamp(row[0], tz=timezone.utc)
 
     def close(self) -> None:
         self._con.close()
