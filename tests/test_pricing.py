@@ -52,4 +52,5 @@ def test_malformed_override_skipped_daemon_does_not_fail(tmp_path, caplog):
     import logging
     with caplog.at_level(logging.WARNING):
         table = PricingTable(overrides_path=override)
-    assert "bad" in caplog.text or len(caplog.records) >= 0  # does not raise
+    assert table._prices.get("bad") is None, "malformed model must not be loaded into prices"
+    assert any("bad" in r.message for r in caplog.records), "warning must name the skipped model"

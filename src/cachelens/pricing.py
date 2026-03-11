@@ -5,10 +5,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore
+import tomllib
 
 logger = logging.getLogger(__name__)
 _DATA_DIR = Path(__file__).parent / "data"
