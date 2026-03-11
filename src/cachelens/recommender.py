@@ -30,19 +30,29 @@ class Recommendation:
 def generate_recommendations(store: UsageStore) -> list[Recommendation]:
     """Query the store and return ranked recommendations."""
     cutoff = (date.today() - timedelta(days=30)).isoformat()
-    today = date.today().isoformat()
 
-    rows = store._con.execute(
-        """SELECT provider, model, source,
-               SUM(call_count) as call_count,
-               SUM(cache_read_tokens) as cache_read_tokens,
-               SUM(cache_write_tokens) as cache_write_tokens,
-               SUM(cost_usd) as cost_usd
-           FROM daily_agg
-           WHERE date > ? AND date <= ?
-           GROUP BY provider, model, source""",
-        (cutoff, today),
-    ).fetchall()
+    raw_rows = store.query_daily_agg_since(cutoff)
+
+    # Aggregate by (provider, model, source) across the 30-day window
+    agg: dict[tuple, dict] = {}
+    for row in raw_rows:
+        key = (row["provider"], row["model"], row["source"])
+        if key not in agg:
+            agg[key] = {
+                "provider": row["provider"],
+                "model": row["model"],
+                "source": row["source"],
+                "call_count": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.0,
+            }
+        agg[key]["call_count"] += row["call_count"] or 0
+        agg[key]["cache_read_tokens"] += row["cache_read_tokens"] or 0
+        agg[key]["cache_write_tokens"] += row["cache_write_tokens"] or 0
+        agg[key]["cost_usd"] += row["cost_usd"] or 0.0
+
+    rows = list(agg.values())
 
     recommendations: list[Recommendation] = []
 
@@ -182,9 +192,14 @@ def _check_downsell_opportunity(rows: list) -> list[Recommendation]:
 
 
 def _rank(recommendations: list[Recommendation]) -> list[Recommendation]:
-    def sort_key(r: Recommendation) -> tuple[int, float]:
-        impact_rank = _IMPACT_ORDER.get(r.estimated_impact, 99)
-        spend = r.metrics.get("cost_usd", 0.0)
-        return (impact_rank, -spend)
+    def _sort_key(r: Recommendation) -> tuple:
+        impact_order = {"high": 0, "medium": 1, "low": 2}
+        if r.type == "low_cache_hit_rate":
+            secondary = -r.metrics.get("call_count", 0)
+        elif r.type == "cache_write_waste":
+            secondary = -r.metrics.get("cache_write_tokens", 0)
+        else:
+            secondary = -r.metrics.get("cost_usd", 0.0)
+        return (impact_order.get(r.estimated_impact, 3), secondary)
 
-    return sorted(recommendations, key=sort_key)
+    return sorted(recommendations, key=_sort_key)

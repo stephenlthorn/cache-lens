@@ -99,6 +99,7 @@ def test_recommendations_ranked_high_before_medium(store):
     recs = generate_recommendations(store)
     assert len(recs) >= 2
     assert recs[0].estimated_impact == "high"
+    assert recs[1].estimated_impact == "medium"
 
 
 def test_recommendation_has_deep_dive_link(store):
@@ -127,3 +128,11 @@ def test_only_checks_last_30_days(store):
                   call_count=500, cache_read_tokens=0)
     recs = generate_recommendations(store)
     assert not any(r.type == "low_cache_hit_rate" for r in recs)
+
+
+def test_includes_data_from_exactly_30_days_ago(store):
+    _insert_daily(store, date_str=today_minus(30), provider="anthropic",
+                  model="claude-sonnet-4-6", source="boundary-app",
+                  call_count=200, cache_read_tokens=0)
+    recs = generate_recommendations(store)
+    assert any(r.type == "low_cache_hit_rate" for r in recs)

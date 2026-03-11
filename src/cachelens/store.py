@@ -207,6 +207,14 @@ class UsageStore:
             return None
         return datetime.fromtimestamp(row[0], tz=timezone.utc)
 
+    def query_daily_agg_since(self, since_date: str) -> list[dict]:
+        """Return all daily_agg rows where date >= since_date."""
+        rows = self._con.execute(
+            "SELECT * FROM daily_agg WHERE date >= ? ORDER BY date",
+            (since_date,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def close(self) -> None:
         self._con.close()
 
