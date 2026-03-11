@@ -5,6 +5,7 @@ from .repeats import find_repeated_blocks
 from .scorer import cacheability_score
 from .waste import build_waste_summary
 from .suggestions import build_suggestions
+from .optimizer import build_optimized_structure
 from ..models import AnalysisInput, AnalysisResult, InputSummary, StaticDynamicBreakdown, WasteSummary
 
 
@@ -36,6 +37,7 @@ def analyze(inp: AnalysisInput, min_tokens: int = 50) -> AnalysisResult:
 
     waste_summary = build_waste_summary(total_input_tokens=total_tokens, repeated_blocks=repeated)
     suggestions = build_suggestions(inp, repeated, waste_summary)
+    optimized_structure = build_optimized_structure(inp, repeated, counter)
 
     return AnalysisResult(
         input_type=inp.input_type,
@@ -47,5 +49,5 @@ def analyze(inp: AnalysisInput, min_tokens: int = 50) -> AnalysisResult:
         static_dynamic_breakdown=static_dynamic,
         repeated_blocks=repeated,
         suggestions=suggestions,
-        optimized_structure=None,
+        optimized_structure=optimized_structure,
     )
