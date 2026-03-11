@@ -1,0 +1,32 @@
+{
+  "calls": [
+    {
+      "call_id": "1",
+      "model": "example-model",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are CacheLens example assistant.\n\nFollow the rules exactly.\n\nOutput JSON only."
+        },
+        {
+          "role": "user",
+          "content": "Summarize this text: Hello world"
+        }
+      ]
+    },
+    {
+      "call_id": "2",
+      "model": "example-model",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are CacheLens example assistant.\n\nFollow the rules exactly.\n\nOutput JSON only."
+        },
+        {
+          "role": "user",
+          "content": "Summarize this text: Another input"
+        }
+      ]
+    }
+  ]
+}

@@ -22,5 +22,13 @@ cachelens = "cachelens.cli:main"
 requires = ["hatchling>=1.22.0"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/cachelens"]
+include = [
+  "src/cachelens/static/**",
+  "examples/**",
+  "PRODUCT_SPEC.md",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
