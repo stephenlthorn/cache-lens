@@ -133,10 +133,11 @@ def test_kpi_endpoint_custom_days(client: TestClient) -> None:
 
 
 def test_kpi_endpoint_invalid_days_defaults_to_30(client: TestClient) -> None:
-    """GET /api/usage/kpi?days=999 returns 400 or defaults to 30."""
+    """GET /api/usage/kpi?days=999 defaults to 30."""
     response = client.get("/api/usage/kpi?days=999")
-    # Should either reject or clamp to valid values; either 400 or 200 with valid days
-    assert response.status_code in (200, 400)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["days"] == 30
 
 
 def test_kpi_reflects_inserted_calls(client: TestClient, test_store: UsageStore) -> None:
@@ -363,9 +364,9 @@ def test_websocket_max_10_connections(
 
 
 def test_proxy_route_unknown_provider_returns_error(client: TestClient) -> None:
-    """GET /proxy/unknown/v1/test returns 4xx error for unknown provider."""
+    """GET /proxy/unknown/v1/test returns 404 for unknown provider."""
     response = client.get("/proxy/unknown/v1/test")
-    assert response.status_code in (400, 404)
+    assert response.status_code == 404
 
 
 def test_proxy_route_known_provider_route_is_registered(

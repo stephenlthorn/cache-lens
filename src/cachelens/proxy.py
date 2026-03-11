@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import AsyncIterator
 
 import httpx
@@ -313,7 +313,7 @@ async def handle_proxy_request(
     body: bytes,
     store: UsageStore,
     pricing: PricingTable,
-    on_call_recorded: Callable[[dict], None] | None = None,
+    on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
 ) -> Response:
     """Forward the request to the upstream provider and record usage.
 
@@ -322,7 +322,7 @@ async def handle_proxy_request(
     parsed = parse_proxy_path(path, headers)
     if parsed is None:
         return Response(
-            status_code=400,
+            status_code=404,
             content=b'{"error": "invalid proxy path"}',
             media_type="application/json",
         )
@@ -330,7 +330,7 @@ async def handle_proxy_request(
     base_url = PROVIDER_URLS.get(parsed.provider)
     if base_url is None:
         return Response(
-            status_code=400,
+            status_code=404,
             content=b'{"error": "unknown provider"}',
             media_type="application/json",
         )
@@ -387,7 +387,7 @@ def _build_streaming_response(
     endpoint: str,
     store: UsageStore,
     pricing: PricingTable,
-    on_call_recorded: Callable[[dict], None] | None = None,
+    on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
 ) -> StreamingResponse:
     """Build a StreamingResponse whose generator owns the client lifecycle."""
     client = httpx.AsyncClient(timeout=300.0, follow_redirects=True)
@@ -414,7 +414,7 @@ def _build_streaming_response(
                         usage=usage,
                     )
                     if on_call_recorded is not None:
-                        on_call_recorded(event)
+                        await on_call_recorded(event)
         finally:
             await client.aclose()
 
@@ -433,7 +433,7 @@ async def _handle_non_streaming(
     endpoint: str,
     store: UsageStore,
     pricing: PricingTable,
-    on_call_recorded: Callable[[dict], None] | None = None,
+    on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
 ) -> Response:
     response = await client.request(method, url, headers=headers, content=body)
     response_body = response.content
@@ -451,7 +451,7 @@ async def _handle_non_streaming(
                 usage=usage,
             )
             if on_call_recorded is not None:
-                on_call_recorded(event)
+                await on_call_recorded(event)
 
     return Response(
         content=response_body,

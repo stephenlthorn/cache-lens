@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import threading
@@ -26,30 +25,7 @@ from .store import UsageStore
 # Default DB path used when no store is injected (production mode)
 DEFAULT_DB_PATH: Path = Path.home() / ".cachelens" / "usage.db"
 
-# Module-level set of active WebSocket connections
-_ws_clients: set[WebSocket] = set()
 _WS_MAX_CONNECTIONS = 10
-
-
-async def _broadcast_event(event: dict) -> None:
-    """Send event JSON to all connected WebSocket clients, pruning dead ones."""
-    dead: set[WebSocket] = set()
-    for ws in set(_ws_clients):
-        try:
-            await ws.send_text(json.dumps(event))
-        except Exception:
-            dead.add(ws)
-    _ws_clients.difference_update(dead)
-
-
-def _sync_broadcast_event(event: dict) -> None:
-    """Thread-safe broadcast: schedule on the running event loop if available."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_broadcast_event(event))
-    except RuntimeError:
-        pass
 
 
 @asynccontextmanager
@@ -61,6 +37,7 @@ async def _lifespan(
     """FastAPI lifespan: initialise store/pricing, start rollup tasks."""
     app.state.store = store
     app.state.pricing = pricing
+    app.state.ws_clients = set()
     tasks = schedule_rollups(store)
     try:
         yield
@@ -231,18 +208,19 @@ def create_app(
 
     @app.websocket("/api/live")
     async def ws_live(websocket: WebSocket) -> None:
-        if len(_ws_clients) >= _WS_MAX_CONNECTIONS:
+        ws_clients: set[WebSocket] = websocket.app.state.ws_clients
+        if len(ws_clients) >= _WS_MAX_CONNECTIONS:
             await websocket.close(code=1008)
             return
         await websocket.accept()
-        _ws_clients.add(websocket)
+        ws_clients.add(websocket)
         try:
             while True:
                 await websocket.receive_text()  # keep-alive / ping handling
         except WebSocketDisconnect:
-            _ws_clients.discard(websocket)
+            ws_clients.discard(websocket)
         except Exception:
-            _ws_clients.discard(websocket)
+            ws_clients.discard(websocket)
 
     # ------------------------------------------------------------------
     # Proxy routes
@@ -258,6 +236,17 @@ def create_app(
         full_path = f"/proxy/{provider}/{path}"
         body = await request.body()
         headers = dict(request.headers)
+        ws_clients: set[WebSocket] = request.app.state.ws_clients
+
+        async def on_call_recorded(event: dict) -> None:
+            dead: set[WebSocket] = set()
+            for ws in list(ws_clients):
+                try:
+                    await ws.send_json(event)
+                except Exception:
+                    dead.add(ws)
+            ws_clients.difference_update(dead)
+
         return await handle_proxy_request(
             method=request.method,
             path=full_path,
@@ -265,7 +254,7 @@ def create_app(
             body=body,
             store=request.app.state.store,
             pricing=request.app.state.pricing,
-            on_call_recorded=_sync_broadcast_event,
+            on_call_recorded=on_call_recorded,
         )
 
     return app
