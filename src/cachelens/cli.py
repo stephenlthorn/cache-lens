@@ -19,7 +19,14 @@ def main() -> None:
 @click.option("--suggestions", is_flag=True, help="Show full suggestion details (human mode)")
 @click.option("--score-only", is_flag=True, help="Print only the cacheability score")
 @click.option("--min-tokens", type=int, default=50, show_default=True)
-def analyze_cmd(file: str, out_format: str, suggestions: bool, score_only: bool, min_tokens: int) -> None:
+@click.option(
+    "--sponsor-reminder/--no-sponsor-reminder",
+    default=False,
+    show_default=True,
+    envvar="CACHELENS_SPONSOR_REMINDER",
+    help="Show a post-run sponsor reminder (human output only). Can also be enabled via CACHELENS_SPONSOR_REMINDER=1.",
+)
+def analyze_cmd(file: str, out_format: str, suggestions: bool, score_only: bool, min_tokens: int, sponsor_reminder: bool) -> None:
     """Analyze a prompt/chain/trace from a file path or '-' for stdin."""
 
     raw: str
@@ -65,20 +72,21 @@ def analyze_cmd(file: str, out_format: str, suggestions: bool, score_only: bool,
             click.echo(f"        {sug.description}")
     click.echo("\nRun with --format json for machine-readable output.")
 
-    # Sponsorship reminder (human mode only)
-    # Prefer waste_percentage (stable). If optimized_structure has a larger implied savings, use it.
-    saved_pct = float(result.waste_summary.waste_percentage)
-    if result.optimized_structure and result.optimized_structure.original_tokens_per_call and result.optimized_structure.savings_per_call is not None:
-        denom = max(1, int(result.optimized_structure.original_tokens_per_call))
-        opt_pct = (float(result.optimized_structure.savings_per_call) / denom) * 100.0
-        saved_pct = max(saved_pct, opt_pct)
+    # Sponsorship reminder (human mode only; opt-in)
+    if sponsor_reminder:
+        # Prefer waste_percentage (stable). If optimized_structure has a larger implied savings, use it.
+        saved_pct = float(result.waste_summary.waste_percentage)
+        if result.optimized_structure and result.optimized_structure.original_tokens_per_call and result.optimized_structure.savings_per_call is not None:
+            denom = max(1, int(result.optimized_structure.original_tokens_per_call))
+            opt_pct = (float(result.optimized_structure.savings_per_call) / denom) * 100.0
+            saved_pct = max(saved_pct, opt_pct)
 
-    saved_pct_int = int(round(saved_pct))
+        saved_pct_int = int(round(saved_pct))
 
-    click.echo("\n—")
-    click.echo(f"CacheLens saved you ~{saved_pct_int}% tokens in this run.")
-    click.echo("If this tool helps you, consider sponsoring:")
-    click.echo("https://github.com/sponsors/stephenlthorn")
+        click.echo("\n—")
+        click.echo(f"CacheLens saved you ~{saved_pct_int}% tokens in this run.")
+        click.echo("If this tool helps you, consider sponsoring:")
+        click.echo("https://github.com/sponsors/stephenlthorn")
 
 
 @main.command()

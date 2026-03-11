@@ -27,7 +27,7 @@ cachelens ui
 ## CLI
 
 ```bash
-cachelens analyze <file|-> [--format human|json] [--suggestions] [--score-only]
+cachelens analyze <file|-> [--format human|json] [--suggestions] [--score-only] [--sponsor-reminder]
 cachelens ui [--port 8420] [--no-open]
 ```
 
@@ -41,7 +41,12 @@ CacheLens auto-detects:
 
 ## Sponsorship
 
-If CacheLens helps you ship faster or cut token spend, consider sponsoring:
+If CacheLens helps you ship faster or cut token spend, consider sponsoring.
+
+To enable the post-run CLI reminder:
+
+- One-shot: `cachelens analyze … --sponsor-reminder`
+- Or via env var: `export CACHELENS_SPONSOR_REMINDER=1`
 
 https://github.com/sponsors/stephenlthorn
 
