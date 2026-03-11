@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, datetime, timedelta
 
 from .store import UsageStore
+
+_log = logging.getLogger(__name__)
 
 
 def _do_nightly_rollup(store: UsageStore, target_date: date, raw_days: int = 1) -> None:
@@ -75,8 +78,11 @@ async def _nightly_rollup_loop(store: UsageStore, raw_days: int = 1) -> None:
         sleep_secs = _seconds_until(0, 5)
         await asyncio.sleep(sleep_secs)
         yesterday = date.today() - timedelta(days=1)
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, _do_nightly_rollup, store, yesterday, raw_days)
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, _do_nightly_rollup, store, yesterday, raw_days)
+        except Exception:
+            # Log but continue — don't let one failed rollup kill the background task
+            _log.exception("Nightly rollup failed for %s", yesterday)
 
 
 async def _yearly_rollup_loop(store: UsageStore, daily_days: int = 365) -> None:
@@ -87,8 +93,11 @@ async def _yearly_rollup_loop(store: UsageStore, daily_days: int = 365) -> None:
         today = date.today()
         if today.month == 1 and today.day == 1:
             prior_year = today.year - 1
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, _do_yearly_rollup, store, prior_year, daily_days)
+            try:
+                await asyncio.get_running_loop().run_in_executor(None, _do_yearly_rollup, store, prior_year, daily_days)
+            except Exception:
+                # Log but continue — don't let one failed rollup kill the background task
+                _log.exception("Yearly rollup failed for %s", prior_year)
 
 
 def run_startup_recovery(store: UsageStore, raw_days: int = 1, daily_days: int = 365) -> None:
@@ -99,19 +108,27 @@ def run_startup_recovery(store: UsageStore, raw_days: int = 1, daily_days: int =
 
     Aggregates all missed days before purging so that recovery of older days
     is not destroyed by the purge triggered by a more-recent day's rollup.
+
+    Yearly rollup: only checked if today is Jan 2 or later (Jan 1 itself is handled
+    by the scheduled _yearly_rollup_loop task at 00:10).
     """
     today = date.today()
 
     # Use a large sentinel to skip per-rollup purging during recovery loop.
-    # We do a single purge at the end.
+    # We do a single purge at the end (only if at least one rollup actually ran).
     _NO_PURGE = 36500  # 100 years — effectively never purges
 
+    any_rollup_ran = False
     for i in range(7, 0, -1):  # 7 days ago through yesterday (oldest first)
         target = today - timedelta(days=i)
+        date_str = target.isoformat()
+        if not store.rollup_done("nightly", date_str):
+            any_rollup_ran = True
         _do_nightly_rollup(store, target, _NO_PURGE)
 
-    # Single purge after all aggregations are done
-    store.purge_raw_calls_older_than_days(raw_days)
+    # Single purge after all aggregations, but only if at least one rollup ran
+    if any_rollup_ran:
+        store.purge_raw_calls_older_than_days(raw_days)
 
     if today.month == 1 and today.day >= 2:
         prior_year = today.year - 1

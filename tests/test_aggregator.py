@@ -112,13 +112,12 @@ def test_nightly_rollup_purges_old_raw_calls(store: UsageStore) -> None:
 
     _do_nightly_rollup(store, yesterday, raw_days=1)
 
-    # After purge, only the recent call should remain
+    # After purge, only the recent call's aggregation should remain for yesterday
     rows = store.daily_agg_for_date(yesterday.isoformat())
     assert len(rows) == 1
     assert rows[0]["input_tokens"] == 50
 
-    # The old call should be gone from the raw calls table
-    from cachelens.store import UsageStore as _S
+    # The old raw call (3 days ago) should be gone from the raw calls table
     remaining = store._con.execute(
         "SELECT COUNT(*) FROM calls WHERE input_tokens = 999"
     ).fetchone()[0]
@@ -286,3 +285,75 @@ def test_run_startup_recovery_marks_all_nightly_days_done(store: UsageStore) -> 
         assert store.rollup_done("nightly", target.isoformat()), (
             f"Expected nightly rollup done for {target.isoformat()}"
         )
+
+
+# ---------------------------------------------------------------------------
+# _seconds_until — frozen-clock tests
+# ---------------------------------------------------------------------------
+
+
+def test_seconds_until_future_time() -> None:
+    from unittest.mock import patch
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2025, 6, 15, 10, 0, 0)
+    with patch("cachelens.aggregator.datetime") as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        # 11:30 is in the future today
+        secs = _seconds_until(11, 30)
+        assert secs == pytest.approx(5400.0)  # 1.5 hours
+
+
+def test_seconds_until_past_time_returns_tomorrow() -> None:
+    from unittest.mock import patch
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2025, 6, 15, 10, 0, 0)
+    with patch("cachelens.aggregator.datetime") as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        # 09:00 already passed today
+        secs = _seconds_until(9, 0)
+        assert secs == pytest.approx(82800.0)  # 23 hours until next 09:00
+
+
+# ---------------------------------------------------------------------------
+# run_startup_recovery — yearly rollup with mocked date
+# ---------------------------------------------------------------------------
+
+
+def test_run_startup_recovery_skips_yearly_rollup_on_jan_1(store: UsageStore) -> None:
+    from unittest.mock import patch
+    from datetime import date as _date
+
+    with patch("cachelens.aggregator.date") as mock_date:
+        mock_date.today.return_value = _date(2025, 1, 1)
+        mock_date.side_effect = lambda *a, **kw: _date(*a, **kw)
+        run_startup_recovery(store)
+        # On Jan 1, yearly rollup should NOT be triggered
+        assert not store.rollup_done("yearly", "2024")
+
+
+def test_run_startup_recovery_runs_yearly_rollup_on_jan_2(store: UsageStore) -> None:
+    from unittest.mock import patch
+    from datetime import date as _date
+
+    # Seed daily_agg data for 2024 so the yearly rollup has something to process
+    store.upsert_daily_agg(
+        date="2024-06-15",
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        source="test",
+        call_count=1,
+        input_tokens=100,
+        output_tokens=50,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        cost_usd=0.01,
+    )
+
+    with patch("cachelens.aggregator.date") as mock_date:
+        mock_date.today.return_value = _date(2025, 1, 2)
+        mock_date.side_effect = lambda *a, **kw: _date(*a, **kw)
+        run_startup_recovery(store)
+        # On Jan 2, yearly rollup for 2024 should have been attempted and marked done
+        assert store.rollup_done("yearly", "2024")
