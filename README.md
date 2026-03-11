@@ -39,6 +39,24 @@ CacheLens auto-detects:
 - `{ "messages": [ {"role": "system|user|assistant", "content": "..."} ] }`
 - `{ "calls": [ { "messages": [...], "model": "...", "usage": {...} } ] }`
 
+## Sponsorship
+
+If CacheLens helps you ship faster or cut token spend, consider sponsoring:
+
+https://github.com/sponsors/stephenlthorn
+
+### Sponsor tiers (suggested)
+
+- **$5/month — supporter**
+- **$25/month — power user**
+- **$200/month — company sponsor**
+
+### Sponsors
+
+Thanks to these companies supporting CacheLens:
+
+- *(your name here)*
+
 ## Status
 
 This repo is early-stage. MVP is under active development.

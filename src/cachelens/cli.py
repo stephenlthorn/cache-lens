@@ -65,6 +65,21 @@ def analyze_cmd(file: str, out_format: str, suggestions: bool, score_only: bool,
             click.echo(f"        {sug.description}")
     click.echo("\nRun with --format json for machine-readable output.")
 
+    # Sponsorship reminder (human mode only)
+    # Prefer waste_percentage (stable). If optimized_structure has a larger implied savings, use it.
+    saved_pct = float(result.waste_summary.waste_percentage)
+    if result.optimized_structure and result.optimized_structure.original_tokens_per_call and result.optimized_structure.savings_per_call is not None:
+        denom = max(1, int(result.optimized_structure.original_tokens_per_call))
+        opt_pct = (float(result.optimized_structure.savings_per_call) / denom) * 100.0
+        saved_pct = max(saved_pct, opt_pct)
+
+    saved_pct_int = int(round(saved_pct))
+
+    click.echo("\n—")
+    click.echo(f"CacheLens saved you ~{saved_pct_int}% tokens in this run.")
+    click.echo("If this tool helps you, consider sponsoring:")
+    click.echo("https://github.com/sponsors/stephenlthorn")
+
 
 @main.command()
 @click.option("--port", type=int, default=8420, show_default=True)
