@@ -23,23 +23,23 @@ def _insert_call(store, *, ts=None, provider="anthropic", model="claude-sonnet-4
     )
 
 
-def test_insert_call_and_retrieve_today(store):
+def test_insert_call_and_retrieve_last_24h(store):
     _insert_call(store)
-    count = store.raw_calls_today()
+    count = store.raw_calls_last_24h()
     assert count == 1
 
 
-def test_raw_calls_today_returns_int(store):
-    assert isinstance(store.raw_calls_today(), int)
+def test_raw_calls_last_24h_returns_int(store):
+    assert isinstance(store.raw_calls_last_24h(), int)
     _insert_call(store, request_hash="sha256:a")
     _insert_call(store, request_hash="sha256:b")
-    assert store.raw_calls_today() == 2
+    assert store.raw_calls_last_24h() == 2
 
 
-def test_raw_calls_today_excludes_old(store):
+def test_raw_calls_last_24h_excludes_old(store):
     old_ts = int(time.time()) - 2 * 86400
     _insert_call(store, ts=old_ts, request_hash="sha256:old")
-    assert store.raw_calls_today() == 0
+    assert store.raw_calls_last_24h() == 0
 
 
 def test_daily_agg_upsert(store):
@@ -77,7 +77,7 @@ def test_purge_raw_calls_older_than(store):
     old_ts = int(time.time()) - 2 * 86400  # 2 days ago
     _insert_call(store, ts=old_ts, request_hash="sha256:old")
     store.purge_raw_calls_older_than_days(1)
-    assert store.raw_calls_today() == 0
+    assert store.raw_calls_last_24h() == 0
 
 
 def test_rollup_bookkeeping(store):
@@ -127,7 +127,8 @@ def test_purge_daily_agg_older_than_days(store):
 
 
 def test_aggregate_calls_for_date(store):
-    day_ts = 1735689600  # 2025-01-01 00:00:00 UTC
+    from datetime import datetime as _dt
+    day_ts = int(_dt.strptime("2025-01-01", "%Y-%m-%d").timestamp())  # 2025-01-01 00:00:00 local time
     _insert_call(store, ts=day_ts + 100, provider="anthropic", model="claude-sonnet-4-6",
                  source="app", input_tokens=200, output_tokens=100,
                  cache_read_tokens=50, cache_write_tokens=25, cost_usd=0.002,
@@ -189,7 +190,6 @@ def test_db_size_bytes(store):
     assert size > 0
 
 
-def test_db_size_bytes_nonexistent(tmp_path):
-    s = UsageStore.__new__(UsageStore)
-    s._path = tmp_path / "nonexistent.db"
-    assert s.db_size_bytes() == 0
+def test_db_size_bytes_fresh_store_is_positive(tmp_path):
+    s = UsageStore(db_path=tmp_path / "fresh.db")
+    assert s.db_size_bytes() > 0

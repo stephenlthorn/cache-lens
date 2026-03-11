@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -84,7 +84,7 @@ class UsageStore:
         )
         self._con.commit()
 
-    def raw_calls_today(self) -> int:
+    def raw_calls_last_24h(self) -> int:
         day_start = int(time.time()) - 86400
         row = self._con.execute(
             "SELECT COUNT(*) FROM calls WHERE ts >= ?", (day_start,)
@@ -131,7 +131,6 @@ class UsageStore:
         self._con.commit()
 
     def purge_daily_agg_older_than_days(self, days: int) -> None:
-        from datetime import date, timedelta
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         self._con.execute("DELETE FROM daily_agg WHERE date < ?", (cutoff,))
         self._con.commit()
@@ -194,11 +193,7 @@ class UsageStore:
                FROM calls WHERE ts >= ?""",
             (cutoff,),
         ).fetchone()
-        return dict(row) if row else {
-            "call_count": 0, "total_cost_usd": 0.0,
-            "input_tokens": 0, "output_tokens": 0,
-            "cache_read_tokens": 0, "cache_write_tokens": 0,
-        }
+        return dict(row)
 
     def db_size_bytes(self) -> int:
         return self._path.stat().st_size if self._path.exists() else 0
@@ -217,7 +212,5 @@ class UsageStore:
 
 
 def _date_to_ts(date_str: str) -> int:
-    from datetime import datetime
-    import calendar
     dt = datetime.strptime(date_str, "%Y-%m-%d")
-    return calendar.timegm(dt.timetuple())
+    return int(dt.timestamp())
