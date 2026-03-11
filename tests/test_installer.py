@@ -99,3 +99,30 @@ def test_write_env_uses_specified_port(tmp_path):
     content = shell_file.read_text()
     assert "localhost:9999" in content
     assert "localhost:8420" not in content
+
+
+def test_write_env_idempotent_preserves_backup(tmp_path):
+    # First write with existing value to create backup
+    shell_file = tmp_path / ".zshrc"
+    shell_file.write_text('export ANTHROPIC_BASE_URL="https://old.example.com"\n')
+    write_env_to_shell_file(shell_file, port=8420)
+    # Second write (idempotent) — backup should still be present
+    write_env_to_shell_file(shell_file, port=8421)
+    content = shell_file.read_text()
+    assert "old.example.com" in content  # backup preserved
+    assert "localhost:8421" in content   # new port applied
+    export_lines = [l for l in content.splitlines() if l.startswith("export ANTHROPIC_BASE_URL=")]
+    assert len(export_lines) == 1  # no duplicates
+
+
+def test_remove_env_on_nonexistent_file(tmp_path):
+    shell_file = tmp_path / ".nonexistent"
+    remove_env_from_shell_file(shell_file)  # should not raise
+
+
+def test_write_env_backup_stored_as_comment(tmp_path):
+    shell_file = tmp_path / ".zshrc"
+    shell_file.write_text('export ANTHROPIC_BASE_URL="https://old.example.com"\n')
+    write_env_to_shell_file(shell_file, port=8420)
+    content = shell_file.read_text()
+    assert "# cachelens-backup:" in content

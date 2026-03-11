@@ -118,12 +118,13 @@ def daemon(port: int) -> None:
 
 @main.command()
 @click.option("--format", "fmt", default="human", type=click.Choice(["human", "json"]))
-def status(fmt: str) -> None:
+@click.option("--port", default=8420, show_default=True, help="Daemon port")
+def status(fmt: str, port: int) -> None:
     """Show daemon status."""
     import httpx
 
     try:
-        r = httpx.get("http://127.0.0.1:8420/api/status", timeout=2.0)
+        r = httpx.get(f"http://127.0.0.1:{port}/api/status", timeout=2.0)
         data = r.json()
         if fmt == "json":
             click.echo(json.dumps(data, indent=2))

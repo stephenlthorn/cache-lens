@@ -120,14 +120,18 @@ def get_daemon_pid(port: int = 8420) -> int | None:
     return None
 
 
-def _build_cachelens_block(port: int) -> str:
+def _build_cachelens_block(port: int, backups: list[str] | None = None) -> str:
     """Build the shell block of export statements for the given port."""
-    lines = [_CACHELENS_START]
+    lines = [_CACHELENS_START, ""]
+    if backups:
+        for b in backups:
+            lines.append(b)
+        lines.append("")
     for var, url_template in ENV_VARS.items():
-        url = url_template.format(port=port)
-        lines.append(f'export {var}="{url}"')
+        lines.append(f'export {var}="{url_template.format(port=port)}"')
+    lines.append("")
     lines.append(_CACHELENS_END)
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines)
 
 
 def write_env_to_shell_file(shell_file: Path, port: int) -> None:
@@ -136,12 +140,19 @@ def write_env_to_shell_file(shell_file: Path, port: int) -> None:
 
     # Check if cachelens block already exists
     if _CACHELENS_START in existing_content and _CACHELENS_END in existing_content:
-        # Replace existing block (idempotent update)
+        # Replace existing block (idempotent update), preserving backup lines
         pattern = re.compile(
-            re.escape(_CACHELENS_START) + r".*?" + re.escape(_CACHELENS_END) + r"\n?",
+            re.escape(_CACHELENS_START) + r"(.*?)" + re.escape(_CACHELENS_END) + r"\n?",
             re.DOTALL,
         )
-        new_content = pattern.sub(_build_cachelens_block(port), existing_content)
+        match = pattern.search(existing_content)
+        existing_backups: list[str] = []
+        if match:
+            for l in match.group(1).splitlines():
+                if "# cachelens-backup:" in l:
+                    existing_backups.append(l.strip())
+        new_block = _build_cachelens_block(port=port, backups=existing_backups or None)
+        new_content = pattern.sub(new_block, existing_content)
         shell_file.write_text(new_content)
         return
 
@@ -165,14 +176,7 @@ def write_env_to_shell_file(shell_file: Path, port: int) -> None:
     if base and not base.endswith("\n"):
         base += "\n"
 
-    block_lines = [_CACHELENS_START]
-    if backup_lines:
-        block_lines.extend(backup_lines)
-    for var, url_template in ENV_VARS.items():
-        url = url_template.format(port=port)
-        block_lines.append(f'export {var}="{url}"')
-    block_lines.append(_CACHELENS_END)
-    block = "\n".join(block_lines) + "\n"
+    block = _build_cachelens_block(port=port, backups=backup_lines or None)
 
     shell_file.write_text(base + block)
 
@@ -311,7 +315,7 @@ def install(port: int = 8420) -> None:
     print("\nRestart your shell or run: source ~/.zshrc")
 
 
-def uninstall(purge: bool = False, port: int = 8420) -> None:
+def uninstall(purge: bool = False) -> None:
     """Remove installation. Optionally purge data."""
     platform = detect_platform()
 
