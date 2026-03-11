@@ -4,28 +4,151 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CacheLens</title>
+  <meta name="color-scheme" content="dark" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <main class="container">
-    <header class="header">
-      <h1>CacheLens</h1>
-      <button id="loadExample" class="secondary">Load example</button>
-    </header>
+  <div class="bg" aria-hidden="true"></div>
 
-    <section id="inputView">
-      <textarea id="input" placeholder="Paste a prompt, prompt chain, or JSON trace..."></textarea>
-      <div class="row">
-        <button id="analyze" class="primary" disabled>Analyze →</button>
+  <header class="topbar">
+    <div class="topbar__inner">
+      <div class="brand">
+        <div class="brand__mark" aria-hidden="true"></div>
+        <div class="brand__text">
+          <div class="brand__name">CacheLens</div>
+          <div class="brand__tag">Token waste & cacheability analysis — local-first</div>
+        </div>
       </div>
-      <p class="hint">Supports raw text, messages arrays, and multi-call traces (JSON).</p>
+
+      <div class="topbar__actions">
+        <button id="loadExample" class="btn btn--ghost">Load example</button>
+        <label class="btn btn--ghost file">
+          <input id="file" type="file" accept=".json,.jsonl,.txt,application/json,text/plain" hidden />
+          Upload
+        </label>
+        <button id="analyze" class="btn btn--primary" disabled>
+          <span class="btn__label">Analyze</span>
+          <span class="btn__spinner" aria-hidden="true"></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="inputView" class="panel">
+      <div class="panel__header">
+        <h2>Input</h2>
+        <div class="meta" id="inputMeta">0 characters</div>
+      </div>
+
+      <div id="drop" class="drop">
+        <textarea id="input" class="textarea" spellcheck="false" placeholder="Paste a prompt, prompt chain, or JSON trace…\n\nSupports:\n- raw text\n- { \"messages\": [...] }\n- { \"calls\": [...] }\n"></textarea>
+        <div class="drop__hint">Tip: you can drag & drop a .json or .txt file here.</div>
+      </div>
+
+      <div class="row row--split">
+        <div class="hint">
+          No data leaves your machine. Analysis is deterministic (rules-based).
+        </div>
+        <div class="row">
+          <button id="exportJson" class="btn btn--ghost" disabled>Export JSON</button>
+          <button id="newAnalysis" class="btn btn--ghost hidden">New analysis</button>
+        </div>
+      </div>
     </section>
 
-    <section id="resultsView" class="hidden">
-      <button id="newAnalysis" class="secondary">← New analysis</button>
-      <pre id="results"></pre>
+    <section id="resultsView" class="grid hidden" aria-live="polite">
+      <div class="card card--score">
+        <div class="card__header">
+          <h3>Cacheability</h3>
+          <div class="meta" id="scoreLabel">—</div>
+        </div>
+
+        <div class="score">
+          <div id="scoreGauge" class="score__gauge"></div>
+          <div class="score__stats">
+            <div class="kv">
+              <div class="kv__k">Total input</div>
+              <div class="kv__v" id="totalInput">—</div>
+            </div>
+            <div class="kv">
+              <div class="kv__k">Estimated waste</div>
+              <div class="kv__v" id="wastePct">—</div>
+            </div>
+            <div class="kv">
+              <div class="kv__k">Top driver</div>
+              <div class="kv__v" id="topDriver">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="score__breakdown" id="breakdown"></div>
+      </div>
+
+      <div class="card">
+        <div class="card__header">
+          <h3>Top waste sources</h3>
+          <div class="meta" id="wasteMeta">—</div>
+        </div>
+        <ol id="wasteSources" class="list"></ol>
+      </div>
+
+      <div class="card">
+        <div class="card__header">
+          <h3>Static vs dynamic</h3>
+          <div class="meta" id="sdMeta">—</div>
+        </div>
+        <div class="bar">
+          <div class="bar__seg bar__seg--static" id="barStatic"></div>
+          <div class="bar__seg bar__seg--dynamic" id="barDynamic"></div>
+        </div>
+        <div class="row row--split" style="margin-top:10px">
+          <div class="pill">Static: <span id="staticPct">—</span></div>
+          <div class="pill pill--warm">Dynamic: <span id="dynamicPct">—</span></div>
+        </div>
+      </div>
+
+      <div class="card card--wide">
+        <div class="card__header">
+          <h3>Suggestions</h3>
+          <div class="meta" id="sugMeta">—</div>
+        </div>
+        <div id="suggestions" class="stack"></div>
+      </div>
+
+      <div class="card card--wide">
+        <div class="card__header">
+          <h3>Optimized structure</h3>
+          <div class="meta">Copy/paste into your agent loop</div>
+        </div>
+        <div class="tabs">
+          <button class="tab tab--active" data-tab="optimized">Optimized</button>
+          <button class="tab" data-tab="raw">Original</button>
+          <div class="tabs__spacer"></div>
+          <button id="copyOptimized" class="btn btn--ghost btn--sm">Copy</button>
+        </div>
+        <pre class="code" id="optimizedOut"></pre>
+      </div>
+
+      <div class="card card--wide">
+        <div class="card__header">
+          <h3>Repeated blocks</h3>
+          <div class="meta">Largest duplicates ranked by wasted tokens</div>
+        </div>
+        <div id="repeats" class="stack"></div>
+      </div>
+
+      <div id="error" class="alert hidden"></div>
     </section>
   </main>
+
+  <footer class="footer">
+    <div class="container footer__inner">
+      <span>CacheLens MVP</span>
+      <span class="dot">•</span>
+      <span>Local-only, no telemetry</span>
+    </div>
+  </footer>
 
   <script src="/static/app.js"></script>
 </body>
