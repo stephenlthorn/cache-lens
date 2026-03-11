@@ -1,0 +1,476 @@
+"""HTTP proxy handler for CacheLens.
+
+Intercepts AI API calls at /proxy/<provider>[/<tag>]/<upstream-path>,
+forwards them to the real provider API, and records usage metrics.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+from typing import AsyncIterator
+
+import httpx
+
+from cachelens.detector import parse_proxy_path
+from cachelens.pricing import PricingTable
+from cachelens.store import UsageStore
+
+# ---------------------------------------------------------------------------
+# Provider base URLs
+# ---------------------------------------------------------------------------
+
+PROVIDER_URLS: dict[str, str] = {
+    "anthropic": "https://api.anthropic.com",
+    "openai": "https://api.openai.com",
+    "google": "https://generativelanguage.googleapis.com",
+}
+
+# Hop-by-hop headers that must not be forwarded upstream
+_HOP_BY_HOP: frozenset[str] = frozenset({
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "te",
+    "trailers",
+    "upgrade",
+    "proxy-authorization",
+    "proxy-authenticate",
+})
+
+
+# ---------------------------------------------------------------------------
+# Pure helper functions
+# ---------------------------------------------------------------------------
+
+def sha256_request(body: bytes) -> str:
+    """Return SHA-256 hex digest of request body bytes."""
+    return hashlib.sha256(body).hexdigest()
+
+
+def is_streaming_request(body: bytes, provider: str) -> bool:
+    """Return True if the request body requests streaming.
+
+    - Anthropic/OpenAI: body JSON has "stream": true
+    - Google: determined by URL path (not request body); returns False here
+      since path-based detection happens at the handler level.
+    """
+    if not body:
+        return False
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    return bool(data.get("stream") is True)
+
+
+def extract_usage_from_response(body: bytes, provider: str) -> dict | None:
+    """Parse usage metadata from a complete (non-streaming) response body.
+
+    Returns a dict with keys:
+        model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+
+    Returns None if parsing fails or response has no usage.
+    """
+    if not body:
+        return None
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+    if provider == "anthropic":
+        return _extract_anthropic_usage(data)
+    if provider == "openai":
+        return _extract_openai_usage(data)
+    if provider == "google":
+        return _extract_google_usage(data)
+    return None
+
+
+def _extract_anthropic_usage(data: dict) -> dict | None:
+    usage = data.get("usage")
+    if not usage:
+        return None
+    model = data.get("model", "")
+    return {
+        "model": model,
+        "input_tokens": int(usage.get("input_tokens", 0)),
+        "output_tokens": int(usage.get("output_tokens", 0)),
+        "cache_read_tokens": int(usage.get("cache_read_input_tokens", 0)),
+        "cache_write_tokens": int(usage.get("cache_creation_input_tokens", 0)),
+    }
+
+
+def _extract_openai_usage(data: dict) -> dict | None:
+    usage = data.get("usage")
+    if not usage:
+        return None
+    model = data.get("model", "")
+    details = usage.get("prompt_tokens_details") or {}
+    cached_tokens = int(details.get("cached_tokens", 0))
+    return {
+        "model": model,
+        "input_tokens": int(usage.get("prompt_tokens", 0)),
+        "output_tokens": int(usage.get("completion_tokens", 0)),
+        "cache_read_tokens": cached_tokens,
+        "cache_write_tokens": 0,
+    }
+
+
+def _extract_google_usage(data: dict) -> dict | None:
+    usage = data.get("usageMetadata")
+    if not usage:
+        return None
+    model = data.get("modelVersion", "")
+    return {
+        "model": model,
+        "input_tokens": int(usage.get("promptTokenCount", 0)),
+        "output_tokens": int(usage.get("candidatesTokenCount", 0)),
+        "cache_read_tokens": int(usage.get("cachedContentTokenCount", 0)),
+        "cache_write_tokens": 0,
+    }
+
+
+def extract_usage_from_sse_chunks(chunks: list[bytes], provider: str) -> dict | None:
+    """Parse usage from accumulated SSE chunks.
+
+    Anthropic SSE:
+      - "message_start" event carries model + input usage (with cache fields)
+      - "message_delta" event carries final output_tokens
+
+    OpenAI SSE:
+      - The last non-[DONE] data line may carry a full "usage" field when
+        stream_options={"include_usage": true} was requested.
+
+    Google SSE:
+      - Treat each chunk as a full response; last chunk with usageMetadata wins.
+    """
+    if not chunks:
+        return None
+
+    if provider == "anthropic":
+        return _extract_anthropic_sse(chunks)
+    if provider == "openai":
+        return _extract_openai_sse(chunks)
+    if provider == "google":
+        return _extract_google_sse(chunks)
+    return None
+
+
+def _parse_sse_data_lines(chunks: list[bytes]) -> list[str]:
+    """Yield all 'data: ...' line values across the chunk list."""
+    lines: list[str] = []
+    for chunk in chunks:
+        for raw_line in chunk.decode(errors="replace").splitlines():
+            line = raw_line.strip()
+            if line.startswith("data:"):
+                lines.append(line[len("data:"):].strip())
+    return lines
+
+
+def _parse_sse_events(chunks: list[bytes]) -> list[tuple[str, str]]:
+    """Return list of (event_type, data) tuples from SSE chunks."""
+    events: list[tuple[str, str]] = []
+    current_event = "message"
+    current_data_parts: list[str] = []
+
+    for chunk in chunks:
+        for raw_line in chunk.decode(errors="replace").splitlines():
+            line = raw_line.strip()
+            if line.startswith("event:"):
+                current_event = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                current_data_parts.append(line[len("data:"):].strip())
+            elif line == "":
+                if current_data_parts:
+                    events.append((current_event, "\n".join(current_data_parts)))
+                current_event = "message"
+                current_data_parts = []
+
+    if current_data_parts:
+        events.append((current_event, "\n".join(current_data_parts)))
+
+    return events
+
+
+def _extract_anthropic_sse(chunks: list[bytes]) -> dict | None:
+    events = _parse_sse_events(chunks)
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    found_usage = False
+
+    for event_type, data in events:
+        try:
+            payload = json.loads(data)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        if payload.get("type") == "message_start":
+            message = payload.get("message", {})
+            model = message.get("model", "")
+            usage = message.get("usage", {})
+            input_tokens = int(usage.get("input_tokens", 0))
+            cache_read_tokens = int(usage.get("cache_read_input_tokens", 0))
+            cache_write_tokens = int(usage.get("cache_creation_input_tokens", 0))
+            found_usage = True
+
+        elif payload.get("type") == "message_delta":
+            usage = payload.get("usage", {})
+            output_tokens = int(usage.get("output_tokens", output_tokens))
+
+    if not found_usage:
+        return None
+
+    return {
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_write_tokens": cache_write_tokens,
+    }
+
+
+def _extract_openai_sse(chunks: list[bytes]) -> dict | None:
+    data_lines = _parse_sse_data_lines(chunks)
+
+    # Walk backwards to find the last data line with usage (before [DONE])
+    for line in reversed(data_lines):
+        if line == "[DONE]":
+            continue
+        try:
+            payload = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        usage = payload.get("usage")
+        if usage:
+            model = payload.get("model", None)
+            details = (usage.get("prompt_tokens_details") or {})
+            cached_tokens = int(details.get("cached_tokens", 0))
+            return {
+                "model": model,
+                "input_tokens": int(usage.get("prompt_tokens", 0)),
+                "output_tokens": int(usage.get("completion_tokens", 0)),
+                "cache_read_tokens": cached_tokens,
+                "cache_write_tokens": 0,
+            }
+    return None
+
+
+def _extract_google_sse(chunks: list[bytes]) -> dict | None:
+    # Google SSE sends full JSON objects; last one with usageMetadata wins
+    result: dict | None = None
+    data_lines = _parse_sse_data_lines(chunks)
+    for line in data_lines:
+        try:
+            payload = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        candidate = _extract_google_usage(payload)
+        if candidate is not None:
+            result = candidate
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Header filtering
+# ---------------------------------------------------------------------------
+
+def _filter_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Remove hop-by-hop headers before forwarding upstream."""
+    return {
+        k: v
+        for k, v in headers.items()
+        if k.lower() not in _HOP_BY_HOP
+    }
+
+
+# ---------------------------------------------------------------------------
+# Proxy request handler (used by FastAPI route)
+# ---------------------------------------------------------------------------
+
+async def handle_proxy_request(
+    *,
+    path: str,
+    method: str,
+    headers: dict[str, str],
+    body: bytes,
+    store: UsageStore,
+    pricing: PricingTable,
+) -> tuple[int, dict[str, str], bytes | AsyncIterator[bytes]]:
+    """Forward the request to the upstream provider and record usage.
+
+    Returns (status_code, response_headers, body_or_iterator).
+
+    For streaming responses, the third element is an async iterator of bytes.
+    For non-streaming, it's the raw response bytes.
+    """
+    parsed = parse_proxy_path(path, headers)
+    if parsed is None:
+        return (400, {"content-type": "application/json"}, b'{"error": "invalid proxy path"}')
+
+    base_url = PROVIDER_URLS.get(parsed.provider)
+    if base_url is None:
+        return (400, {"content-type": "application/json"}, b'{"error": "unknown provider"}')
+
+    upstream_url = base_url + parsed.upstream_path
+    forward_headers = _filter_headers(headers)
+    request_hash = sha256_request(body)
+
+    # Determine streaming: Google uses path (streamGenerateContent), others use body
+    if parsed.provider == "google":
+        streaming = "streamGenerateContent" in parsed.upstream_path
+    else:
+        streaming = is_streaming_request(body, parsed.provider)
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        if streaming:
+            return await _handle_streaming(
+                client=client,
+                method=method,
+                url=upstream_url,
+                headers=forward_headers,
+                body=body,
+                parsed=parsed,
+                request_hash=request_hash,
+                store=store,
+                pricing=pricing,
+            )
+        else:
+            return await _handle_non_streaming(
+                client=client,
+                method=method,
+                url=upstream_url,
+                headers=forward_headers,
+                body=body,
+                parsed=parsed,
+                request_hash=request_hash,
+                store=store,
+                pricing=pricing,
+            )
+
+
+async def _handle_non_streaming(
+    *,
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: bytes,
+    parsed,
+    request_hash: str,
+    store: UsageStore,
+    pricing: PricingTable,
+) -> tuple[int, dict[str, str], bytes]:
+    response = await client.request(method, url, headers=headers, content=body)
+    response_body = response.content
+    response_headers = dict(response.headers)
+
+    if response.is_success:
+        usage = extract_usage_from_response(response_body, parsed.provider)
+        if usage is not None:
+            _record_call(
+                store=store,
+                pricing=pricing,
+                provider=parsed.provider,
+                source=parsed.source,
+                source_tag=parsed.source_tag,
+                endpoint=url,
+                request_hash=request_hash,
+                usage=usage,
+            )
+
+    return (response.status_code, response_headers, response_body)
+
+
+async def _handle_streaming(
+    *,
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: bytes,
+    parsed,
+    request_hash: str,
+    store: UsageStore,
+    pricing: PricingTable,
+) -> tuple[int, dict[str, str], AsyncIterator[bytes]]:
+    """Initiate a streaming request and return an async iterator of chunks."""
+
+    async def _stream_and_record() -> AsyncIterator[bytes]:
+        chunks: list[bytes] = []
+        try:
+            async with client.stream(method, url, headers=headers, content=body) as response:
+                async for chunk in response.aiter_bytes():
+                    chunks.append(chunk)
+                    yield chunk
+        except (httpx.HTTPError, ConnectionError):
+            return
+
+        usage = extract_usage_from_sse_chunks(chunks, parsed.provider)
+        if usage is not None:
+            _record_call(
+                store=store,
+                pricing=pricing,
+                provider=parsed.provider,
+                source=parsed.source,
+                source_tag=parsed.source_tag,
+                endpoint=url,
+                request_hash=request_hash,
+                usage=usage,
+            )
+
+    # We need the status code before yielding; for streaming we assume 200 initially
+    # and rely on SSE protocol for errors within the stream.
+    return (200, {"content-type": "text/event-stream"}, _stream_and_record())
+
+
+# ---------------------------------------------------------------------------
+# Store helper
+# ---------------------------------------------------------------------------
+
+def _record_call(
+    *,
+    store: UsageStore,
+    pricing: PricingTable,
+    provider: str,
+    source: str,
+    source_tag: str | None,
+    endpoint: str,
+    request_hash: str,
+    usage: dict,
+) -> None:
+    model = usage.get("model") or "unknown"
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    cache_read_tokens = usage.get("cache_read_tokens", 0)
+    cache_write_tokens = usage.get("cache_write_tokens", 0)
+
+    cost = pricing.cost_usd(
+        provider=provider,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+    )
+
+    store.insert_call(
+        ts=int(time.time()),
+        provider=provider,
+        model=model,
+        source=source,
+        source_tag=source_tag,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+        cost_usd=cost,
+        endpoint=endpoint,
+        request_hash=request_hash,
+    )
