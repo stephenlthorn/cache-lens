@@ -8,11 +8,13 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from typing import AsyncIterator
 
 import httpx
+from fastapi.responses import Response, StreamingResponse
 
-from cachelens.detector import parse_proxy_path
+from cachelens.detector import ParsedProxy, parse_proxy_path
 from cachelens.pricing import PricingTable
 from cachelens.store import UsageStore
 
@@ -290,6 +292,15 @@ def _filter_headers(headers: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _filter_response_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Remove hop-by-hop headers from upstream response before forwarding to client."""
+    return {
+        k: v
+        for k, v in headers.items()
+        if k.lower() not in _HOP_BY_HOP
+    }
+
+
 # ---------------------------------------------------------------------------
 # Proxy request handler (used by FastAPI route)
 # ---------------------------------------------------------------------------
@@ -302,25 +313,32 @@ async def handle_proxy_request(
     body: bytes,
     store: UsageStore,
     pricing: PricingTable,
-) -> tuple[int, dict[str, str], bytes | AsyncIterator[bytes]]:
+    on_call_recorded: Callable[[dict], None] | None = None,
+) -> Response:
     """Forward the request to the upstream provider and record usage.
 
-    Returns (status_code, response_headers, body_or_iterator).
-
-    For streaming responses, the third element is an async iterator of bytes.
-    For non-streaming, it's the raw response bytes.
+    Returns a FastAPI Response (or StreamingResponse for streaming requests).
     """
     parsed = parse_proxy_path(path, headers)
     if parsed is None:
-        return (400, {"content-type": "application/json"}, b'{"error": "invalid proxy path"}')
+        return Response(
+            status_code=400,
+            content=b'{"error": "invalid proxy path"}',
+            media_type="application/json",
+        )
 
     base_url = PROVIDER_URLS.get(parsed.provider)
     if base_url is None:
-        return (400, {"content-type": "application/json"}, b'{"error": "unknown provider"}')
+        return Response(
+            status_code=400,
+            content=b'{"error": "unknown provider"}',
+            media_type="application/json",
+        )
 
     upstream_url = base_url + parsed.upstream_path
     forward_headers = _filter_headers(headers)
     request_hash = sha256_request(body)
+    endpoint = parsed.upstream_path
 
     # Determine streaming: Google uses path (streamGenerateContent), others use body
     if parsed.provider == "google":
@@ -328,20 +346,21 @@ async def handle_proxy_request(
     else:
         streaming = is_streaming_request(body, parsed.provider)
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        if streaming:
-            return await _handle_streaming(
-                client=client,
-                method=method,
-                url=upstream_url,
-                headers=forward_headers,
-                body=body,
-                parsed=parsed,
-                request_hash=request_hash,
-                store=store,
-                pricing=pricing,
-            )
-        else:
+    if streaming:
+        return _build_streaming_response(
+            method=method,
+            url=upstream_url,
+            headers=forward_headers,
+            body=body,
+            parsed=parsed,
+            request_hash=request_hash,
+            endpoint=endpoint,
+            store=store,
+            pricing=pricing,
+            on_call_recorded=on_call_recorded,
+        )
+    else:
+        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
             return await _handle_non_streaming(
                 client=client,
                 method=method,
@@ -350,9 +369,56 @@ async def handle_proxy_request(
                 body=body,
                 parsed=parsed,
                 request_hash=request_hash,
+                endpoint=endpoint,
                 store=store,
                 pricing=pricing,
+                on_call_recorded=on_call_recorded,
             )
+
+
+def _build_streaming_response(
+    *,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: bytes,
+    parsed: ParsedProxy,
+    request_hash: str,
+    endpoint: str,
+    store: UsageStore,
+    pricing: PricingTable,
+    on_call_recorded: Callable[[dict], None] | None = None,
+) -> StreamingResponse:
+    """Build a StreamingResponse whose generator owns the client lifecycle."""
+    client = httpx.AsyncClient(timeout=300.0, follow_redirects=True)
+
+    async def stream_gen() -> AsyncIterator[bytes]:
+        try:
+            async with client.stream(method, url, headers=headers, content=body) as response:
+                chunks: list[bytes] = []
+                try:
+                    async for chunk in response.aiter_bytes():
+                        chunks.append(chunk)
+                        yield chunk
+                except Exception:
+                    return
+
+                usage = extract_usage_from_sse_chunks(chunks, parsed.provider)
+                if usage is not None:
+                    event = _record_call(
+                        store=store,
+                        pricing=pricing,
+                        parsed=parsed,
+                        endpoint=endpoint,
+                        request_hash=request_hash,
+                        usage=usage,
+                    )
+                    if on_call_recorded is not None:
+                        on_call_recorded(event)
+        finally:
+            await client.aclose()
+
+    return StreamingResponse(stream_gen(), media_type="text/event-stream")
 
 
 async def _handle_non_streaming(
@@ -362,72 +428,36 @@ async def _handle_non_streaming(
     url: str,
     headers: dict[str, str],
     body: bytes,
-    parsed,
+    parsed: ParsedProxy,
     request_hash: str,
+    endpoint: str,
     store: UsageStore,
     pricing: PricingTable,
-) -> tuple[int, dict[str, str], bytes]:
+    on_call_recorded: Callable[[dict], None] | None = None,
+) -> Response:
     response = await client.request(method, url, headers=headers, content=body)
     response_body = response.content
-    response_headers = dict(response.headers)
+    response_headers = _filter_response_headers(dict(response.headers))
 
     if response.is_success:
         usage = extract_usage_from_response(response_body, parsed.provider)
         if usage is not None:
-            _record_call(
+            event = _record_call(
                 store=store,
                 pricing=pricing,
-                provider=parsed.provider,
-                source=parsed.source,
-                source_tag=parsed.source_tag,
-                endpoint=url,
+                parsed=parsed,
+                endpoint=endpoint,
                 request_hash=request_hash,
                 usage=usage,
             )
+            if on_call_recorded is not None:
+                on_call_recorded(event)
 
-    return (response.status_code, response_headers, response_body)
-
-
-async def _handle_streaming(
-    *,
-    client: httpx.AsyncClient,
-    method: str,
-    url: str,
-    headers: dict[str, str],
-    body: bytes,
-    parsed,
-    request_hash: str,
-    store: UsageStore,
-    pricing: PricingTable,
-) -> tuple[int, dict[str, str], AsyncIterator[bytes]]:
-    """Initiate a streaming request and return an async iterator of chunks."""
-
-    async def _stream_and_record() -> AsyncIterator[bytes]:
-        chunks: list[bytes] = []
-        try:
-            async with client.stream(method, url, headers=headers, content=body) as response:
-                async for chunk in response.aiter_bytes():
-                    chunks.append(chunk)
-                    yield chunk
-        except (httpx.HTTPError, ConnectionError):
-            return
-
-        usage = extract_usage_from_sse_chunks(chunks, parsed.provider)
-        if usage is not None:
-            _record_call(
-                store=store,
-                pricing=pricing,
-                provider=parsed.provider,
-                source=parsed.source,
-                source_tag=parsed.source_tag,
-                endpoint=url,
-                request_hash=request_hash,
-                usage=usage,
-            )
-
-    # We need the status code before yielding; for streaming we assume 200 initially
-    # and rely on SSE protocol for errors within the stream.
-    return (200, {"content-type": "text/event-stream"}, _stream_and_record())
+    return Response(
+        content=response_body,
+        status_code=response.status_code,
+        headers=response_headers,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -438,21 +468,21 @@ def _record_call(
     *,
     store: UsageStore,
     pricing: PricingTable,
-    provider: str,
-    source: str,
-    source_tag: str | None,
+    parsed: ParsedProxy,
     endpoint: str,
     request_hash: str,
     usage: dict,
-) -> None:
+) -> dict:
+    """Record call in store and return event dict for WebSocket broadcast."""
     model = usage.get("model") or "unknown"
     input_tokens = usage.get("input_tokens", 0)
     output_tokens = usage.get("output_tokens", 0)
     cache_read_tokens = usage.get("cache_read_tokens", 0)
     cache_write_tokens = usage.get("cache_write_tokens", 0)
+    ts = int(time.time())
 
     cost = pricing.cost_usd(
-        provider=provider,
+        provider=parsed.provider,
         model=model,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -461,11 +491,11 @@ def _record_call(
     )
 
     store.insert_call(
-        ts=int(time.time()),
-        provider=provider,
+        ts=ts,
+        provider=parsed.provider,
         model=model,
-        source=source,
-        source_tag=source_tag,
+        source=parsed.source,
+        source_tag=parsed.source_tag,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cache_read_tokens=cache_read_tokens,
@@ -474,3 +504,16 @@ def _record_call(
         endpoint=endpoint,
         request_hash=request_hash,
     )
+
+    return {
+        "ts": ts,
+        "provider": parsed.provider,
+        "model": model,
+        "source": parsed.source,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        "cost_usd": cost,
+        "endpoint": endpoint,
+    }
