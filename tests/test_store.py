@@ -127,8 +127,7 @@ def test_purge_daily_agg_older_than_days(store):
 
 
 def test_aggregate_calls_for_date(store):
-    from datetime import datetime as _dt
-    day_ts = int(_dt.strptime("2025-01-01", "%Y-%m-%d").timestamp())  # 2025-01-01 00:00:00 local time
+    day_ts = int(datetime.strptime("2025-01-01", "%Y-%m-%d").timestamp())  # 2025-01-01 00:00:00 local time
     _insert_call(store, ts=day_ts + 100, provider="anthropic", model="claude-sonnet-4-6",
                  source="app", input_tokens=200, output_tokens=100,
                  cache_read_tokens=50, cache_write_tokens=25, cost_usd=0.002,
