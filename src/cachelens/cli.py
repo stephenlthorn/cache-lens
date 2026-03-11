@@ -97,3 +97,68 @@ def ui(port: int, no_open: bool) -> None:
     from .server import run
 
     run(port=port, open_browser=(not no_open))
+
+
+@main.command()
+@click.option("--port", type=int, default=8420, show_default=True, help="Port to listen on")
+def daemon(port: int) -> None:
+    """Start the CacheLens daemon."""
+    from .installer import is_port_in_use
+
+    if is_port_in_use(port):
+        click.echo(
+            f"Error: port {port} is already in use. Use --port N to specify a different port.",
+            err=True,
+        )
+        raise SystemExit(1)
+    from .server import run
+
+    run(port=port, open_browser=False)
+
+
+@main.command()
+@click.option("--format", "fmt", default="human", type=click.Choice(["human", "json"]))
+def status(fmt: str) -> None:
+    """Show daemon status."""
+    import httpx
+
+    try:
+        r = httpx.get("http://127.0.0.1:8420/api/status", timeout=2.0)
+        data = r.json()
+        if fmt == "json":
+            click.echo(json.dumps(data, indent=2))
+        else:
+            daemon_status = data.get("daemon", "unknown")
+            pid = data.get("pid", "?")
+            port = data.get("port", 8420)
+            db_mb = data.get("db_size_bytes", 0) / 1_000_000
+            raw_calls = data.get("raw_calls_today", 0)
+            ret = data.get("retention", {})
+            last = data.get("last_nightly_rollup") or "never"
+            click.echo(f"CacheLens daemon: {daemon_status} (pid {pid}, port {port})")
+            click.echo(f"DB size: {db_mb:.1f} MB")
+            click.echo(f"Raw calls today: {raw_calls}")
+            click.echo(
+                f"Retention: raw={ret.get('raw_days', 1)}d, daily={ret.get('daily_days', 365)}d, aggregate={ret.get('aggregate', True)}"
+            )
+            click.echo(f"Last rollup: {last}")
+    except Exception:
+        click.echo("CacheLens daemon: stopped")
+
+
+@main.command("install")
+@click.option("--port", type=int, default=8420, show_default=True, help="Port for the daemon")
+def install_cmd(port: int) -> None:
+    """Install CacheLens as a background service."""
+    from .installer import install as _install
+
+    _install(port=port)
+
+
+@main.command("uninstall")
+@click.option("--purge", is_flag=True, help="Also delete all usage data")
+def uninstall_cmd(purge: bool) -> None:
+    """Uninstall CacheLens."""
+    from .installer import uninstall as _uninstall
+
+    _uninstall(purge=purge)
