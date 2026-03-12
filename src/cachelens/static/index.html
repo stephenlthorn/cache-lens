@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CacheLens</title>
   <meta name="color-scheme" content="dark" />
-  <link rel="stylesheet" href="/static/style.css?v=6" />
+  <link rel="stylesheet" href="/static/style.css?v=7" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -28,6 +28,8 @@
         <button class="page-tab" data-page="analyze">Analyze</button>
       </nav>
 
+      <button class="btn btn--ghost btn--sm" id="settingsToggle" title="Settings">Settings</button>
+
       <div class="topbar__actions" id="analyzeActions">
         <button id="loadExample" class="btn btn--ghost">Load example</button>
         <label class="btn btn--ghost file">
@@ -43,6 +45,64 @@
   </header>
 
   <main class="container">
+
+    <!-- Cost Alert Banner -->
+    <div id="costAlertBanner" class="alert-banner hidden">
+      <span id="costAlertMessage"></span>
+      <button id="dismissAlert" class="btn btn--ghost btn--sm">Dismiss</button>
+    </div>
+
+    <!-- Budget Status Bar -->
+    <div id="budgetStatusBar" class="budget-bar hidden">
+      <div class="budget-bar__item">
+        <span class="budget-bar__label">Daily</span>
+        <div class="budget-bar__track"><div class="budget-bar__fill" id="budgetDailyFill"></div></div>
+        <span class="budget-bar__text" id="budgetDailyText">—</span>
+      </div>
+      <div class="budget-bar__item">
+        <span class="budget-bar__label">Monthly</span>
+        <div class="budget-bar__track"><div class="budget-bar__fill" id="budgetMonthlyFill"></div></div>
+        <span class="budget-bar__text" id="budgetMonthlyText">—</span>
+      </div>
+    </div>
+
+    <!-- Settings Panel (overlay) -->
+    <div id="settingsPanel" class="settings-panel hidden">
+      <div class="settings-panel__inner">
+        <div class="settings-panel__header">
+          <h3>Settings</h3>
+          <button id="settingsClose" class="btn btn--ghost btn--sm">Close</button>
+        </div>
+        <div class="settings-section">
+          <h4>Cost Alerts</h4>
+          <label class="settings-row">
+            <span>Enable alerts</span>
+            <input type="checkbox" id="alertsEnabled" />
+          </label>
+          <label class="settings-row">
+            <span>Daily threshold ($)</span>
+            <input type="number" id="alertThreshold" class="filter-input" step="0.50" min="0" placeholder="e.g. 5.00" />
+          </label>
+          <button id="saveAlerts" class="btn btn--primary btn--sm">Save Alerts</button>
+        </div>
+        <div class="settings-section">
+          <h4>Budget Caps</h4>
+          <label class="settings-row">
+            <span>Enable budget</span>
+            <input type="checkbox" id="budgetEnabled" />
+          </label>
+          <label class="settings-row">
+            <span>Daily limit ($)</span>
+            <input type="number" id="budgetDaily" class="filter-input" step="1.00" min="0" placeholder="e.g. 10.00" />
+          </label>
+          <label class="settings-row">
+            <span>Monthly limit ($)</span>
+            <input type="number" id="budgetMonthly" class="filter-input" step="10.00" min="0" placeholder="e.g. 100.00" />
+          </label>
+          <button id="saveBudget" class="btn btn--primary btn--sm">Save Budget</button>
+        </div>
+      </div>
+    </div>
 
     <!-- PAGE: Dashboard -->
     <div id="page-dashboard" class="page-content">
@@ -115,6 +175,42 @@
         </div>
       </div>
 
+      <!-- Cache Hit Rate Trend (Phase 3) -->
+      <div class="card card--wide">
+        <div class="card__header">
+          <h3>Cache Hit Rate Trend</h3>
+          <div class="meta" id="cacheTrendMeta">—</div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="cacheTrendChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Recent Sessions (Phase 5) -->
+      <div class="card card--wide">
+        <div class="card__header">
+          <h3>Recent Sessions</h3>
+          <div class="meta">Grouped by source, 30-min gap</div>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Start</th>
+                <th>Duration</th>
+                <th>Calls</th>
+                <th>Models</th>
+                <th>Cost</th>
+              </tr>
+            </thead>
+            <tbody id="sessionsBody">
+              <tr><td colspan="6" class="table-empty">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Bottom row: Provider breakdown + Source breakdown -->
       <div class="dash-bottom">
         <div class="card">
@@ -169,6 +265,30 @@
           <input type="text" id="filterSource" class="filter-input" placeholder="e.g. my-app" />
         </div>
         <button id="applyFilters" class="btn btn--primary">Apply</button>
+        <button id="exportCsv" class="btn btn--ghost">Export CSV</button>
+      </div>
+
+      <!-- Model Comparison "What If?" -->
+      <div class="card card--wide">
+        <div class="card__header">
+          <h3>Model Comparison — "What If?"</h3>
+        </div>
+        <div class="compare-bar">
+          <div class="filter-group">
+            <label class="filter-label">Current Model</label>
+            <select id="compareFrom" class="filter-input filter-select">
+              <option value="">Select model…</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label">Compare With</label>
+            <select id="compareTo" class="filter-input filter-select">
+              <option value="">Select model…</option>
+            </select>
+          </div>
+          <button id="compareModels" class="btn btn--primary btn--sm">Compare</button>
+        </div>
+        <div id="compareResult" class="compare-result hidden"></div>
       </div>
 
       <div class="card card--wide">
@@ -351,6 +471,6 @@
     </div>
   </footer>
 
-  <script src="/static/app.js?v=6"></script>
+  <script src="/static/app.js?v=7"></script>
 </body>
 </html>

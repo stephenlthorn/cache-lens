@@ -228,3 +228,67 @@ def test_kpi_rolling_combines_daily_agg_and_live_calls(store):
     assert kpi["call_count"] == 6
     assert kpi["input_tokens"] == 700
     assert kpi["total_cost_usd"] == pytest.approx(0.07)
+
+
+# ---------------------------------------------------------------------------
+# Settings (Phase 0)
+# ---------------------------------------------------------------------------
+
+
+def test_settings_get_returns_none_for_missing_key(store):
+    assert store.get_setting("nonexistent") is None
+
+
+def test_settings_set_and_get(store):
+    store.set_setting("alerts.enabled", "true")
+    assert store.get_setting("alerts.enabled") == "true"
+
+
+def test_settings_upsert_overwrites(store):
+    store.set_setting("alerts.threshold", "5.0")
+    store.set_setting("alerts.threshold", "10.0")
+    assert store.get_setting("alerts.threshold") == "10.0"
+
+
+def test_settings_delete(store):
+    store.set_setting("temp.key", "value")
+    assert store.get_setting("temp.key") == "value"
+    store.delete_setting("temp.key")
+    assert store.get_setting("temp.key") is None
+
+
+# ---------------------------------------------------------------------------
+# Spend helpers (Phase 6-7)
+# ---------------------------------------------------------------------------
+
+
+def test_daily_spend_usd_includes_today(store):
+    _insert_call(store, cost_usd=1.50, request_hash="sha256:d1")
+    _insert_call(store, cost_usd=0.75, request_hash="sha256:d2")
+    spend = store.daily_spend_usd()
+    assert spend == pytest.approx(2.25)
+
+
+def test_monthly_spend_usd_includes_today(store):
+    _insert_call(store, cost_usd=3.00, request_hash="sha256:m1")
+    spend = store.monthly_spend_usd()
+    assert spend >= 3.0
+
+
+# ---------------------------------------------------------------------------
+# raw_calls_for_period (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def test_raw_calls_for_period_returns_recent(store):
+    _insert_call(store, request_hash="sha256:r1")
+    calls = store.raw_calls_for_period(1)
+    assert len(calls) == 1
+
+
+def test_raw_calls_for_period_filters_by_source(store):
+    _insert_call(store, source="app-a", request_hash="sha256:s1")
+    _insert_call(store, source="app-b", request_hash="sha256:s2")
+    calls = store.raw_calls_for_period(1, source="app-a")
+    assert len(calls) == 1
+    assert calls[0]["source"] == "app-a"

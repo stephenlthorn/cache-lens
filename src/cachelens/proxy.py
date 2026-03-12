@@ -332,6 +332,38 @@ async def handle_proxy_request(
 
     Returns a FastAPI Response (or StreamingResponse for streaming requests).
     """
+    # Budget cap enforcement (Phase 7)
+    budget_enabled = store.get_setting("budget.enabled") == "true"
+    if budget_enabled:
+        daily_limit_str = store.get_setting("budget.daily_limit_usd")
+        monthly_limit_str = store.get_setting("budget.monthly_limit_usd")
+        if daily_limit_str:
+            daily_limit = float(daily_limit_str)
+            if store.daily_spend_usd() >= daily_limit:
+                return Response(
+                    status_code=429,
+                    content=json.dumps({
+                        "error": "CacheLens daily budget exceeded",
+                        "daily_spend_usd": store.daily_spend_usd(),
+                        "daily_limit_usd": daily_limit,
+                    }).encode(),
+                    media_type="application/json",
+                    headers={"Retry-After": "3600"},
+                )
+        if monthly_limit_str:
+            monthly_limit = float(monthly_limit_str)
+            if store.monthly_spend_usd() >= monthly_limit:
+                return Response(
+                    status_code=429,
+                    content=json.dumps({
+                        "error": "CacheLens monthly budget exceeded",
+                        "monthly_spend_usd": store.monthly_spend_usd(),
+                        "monthly_limit_usd": monthly_limit,
+                    }).encode(),
+                    media_type="application/json",
+                    headers={"Retry-After": "3600"},
+                )
+
     parsed = parse_proxy_path(path, headers)
     if parsed is None:
         return Response(

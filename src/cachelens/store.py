@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS rollups (
     completed_at INTEGER NOT NULL,
     PRIMARY KEY (job, period)
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts);
 CREATE INDEX IF NOT EXISTS idx_daily_agg_date ON daily_agg(date);
 """
@@ -282,6 +287,117 @@ class UsageStore:
             rows = self._con.execute(
                 "SELECT * FROM calls ORDER BY ts DESC LIMIT ?", (limit,)
             ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Settings (key-value store)
+    # ------------------------------------------------------------------
+
+    def get_setting(self, key: str) -> str | None:
+        with self._lock:
+            row = self._con.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+        return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._lock:
+            self._con.execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, value, int(time.time())),
+            )
+            self._con.commit()
+
+    def delete_setting(self, key: str) -> None:
+        with self._lock:
+            self._con.execute("DELETE FROM settings WHERE key = ?", (key,))
+            self._con.commit()
+
+    # ------------------------------------------------------------------
+    # Spend helpers (for alerts + budget caps)
+    # ------------------------------------------------------------------
+
+    def daily_spend_usd(self) -> float:
+        """Total cost_usd for today (daily_agg + live calls, deduplicated)."""
+        today = date.today().isoformat()
+        with self._lock:
+            agg = self._con.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM daily_agg WHERE date = ?",
+                (today,),
+            ).fetchone()
+            day_start = _date_to_ts(today)
+            live = self._con.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM calls WHERE ts >= ?",
+                (day_start,),
+            ).fetchone()
+        return (agg[0] or 0.0) + (live[0] or 0.0)
+
+    def monthly_spend_usd(self) -> float:
+        """Total cost_usd for the current calendar month."""
+        today = date.today()
+        month_start = today.replace(day=1).isoformat()
+        today_str = today.isoformat()
+        with self._lock:
+            agg = self._con.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM daily_agg WHERE date >= ? AND date < ?",
+                (month_start, today_str),
+            ).fetchone()
+            day_start = _date_to_ts(today_str)
+            live = self._con.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM calls WHERE ts >= ?",
+                (day_start,),
+            ).fetchone()
+        return (agg[0] or 0.0) + (live[0] or 0.0)
+
+    # ------------------------------------------------------------------
+    # Cache hit rate trend (Phase 3)
+    # ------------------------------------------------------------------
+
+    def daily_cache_hit_trend(self, days: int) -> list[dict[str, Any]]:
+        """Per-day cache hit data for the last N days."""
+        since = (date.today() - timedelta(days=days)).isoformat()
+        today = date.today().isoformat()
+        with self._lock:
+            rows = self._con.execute(
+                """SELECT date,
+                   SUM(input_tokens) as input_tokens,
+                   SUM(cache_read_tokens) as cache_read_tokens
+                   FROM daily_agg WHERE date >= ? AND date < ?
+                   GROUP BY date ORDER BY date""",
+                (since, today),
+            ).fetchall()
+        result = [dict(r) for r in rows]
+
+        today_rows = self.aggregate_calls_for_date(today)
+        if today_rows:
+            total_input = sum(r["input_tokens"] for r in today_rows)
+            total_cache_read = sum(r["cache_read_tokens"] for r in today_rows)
+            if total_input + total_cache_read > 0:
+                result.append({
+                    "date": today,
+                    "input_tokens": total_input,
+                    "cache_read_tokens": total_cache_read,
+                })
+        return result
+
+    # ------------------------------------------------------------------
+    # Raw calls for sessions (Phase 5)
+    # ------------------------------------------------------------------
+
+    def raw_calls_for_period(self, days: int, source: str | None = None) -> list[dict[str, Any]]:
+        """Return raw calls for the last N days, sorted by ts ASC."""
+        cutoff = int(time.time()) - days * 86400
+        with self._lock:
+            if source:
+                rows = self._con.execute(
+                    "SELECT * FROM calls WHERE ts >= ? AND source = ? ORDER BY ts ASC",
+                    (cutoff, source),
+                ).fetchall()
+            else:
+                rows = self._con.execute(
+                    "SELECT * FROM calls WHERE ts >= ? ORDER BY ts ASC",
+                    (cutoff,),
+                ).fetchall()
         return [dict(r) for r in rows]
 
     def close(self) -> None:

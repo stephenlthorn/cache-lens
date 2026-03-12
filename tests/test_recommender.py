@@ -46,13 +46,13 @@ def test_low_cache_hit_rate_requires_100_calls(store):
     assert not any(r.type == "low_cache_hit_rate" for r in recs)
 
 
-def test_low_cache_hit_rate_not_for_openai(store):
-    # OpenAI doesn't support prompt caching the same way
+def test_low_cache_hit_rate_works_for_openai(store):
+    # Now works for all providers (not just Anthropic)
     _insert_daily(store, date_str=today_minus(1), provider="openai",
                   model="gpt-4o", source="myapp",
                   call_count=200, cache_read_tokens=0)
     recs = generate_recommendations(store)
-    assert not any(r.type == "low_cache_hit_rate" for r in recs)
+    assert any(r.type == "low_cache_hit_rate" for r in recs)
 
 
 def test_cache_write_waste_detected(store):
@@ -80,10 +80,10 @@ def test_downsell_gpt4o_to_mini(store):
 
 
 def test_downsell_requires_min_spend(store):
-    # Only $0.50 spend — below $1.00 threshold
+    # Only $0.40 spend — below $0.50 threshold
     _insert_daily(store, date_str=today_minus(1), provider="openai",
                   model="gpt-4o", source="myapp",
-                  call_count=10, cost_usd=0.50)
+                  call_count=10, cost_usd=0.40)
     recs = generate_recommendations(store)
     assert not any(r.type == "downsell_opportunity" for r in recs)
 
@@ -159,3 +159,102 @@ def test_includes_data_from_exactly_30_days_ago(store):
                   call_count=200, cache_read_tokens=0)
     recs = generate_recommendations(store)
     assert any(r.type == "low_cache_hit_rate" for r in recs)
+
+
+# ---------------------------------------------------------------------------
+# New recommendation checks (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def test_low_cache_hit_rate_below_50pct(store):
+    """Hit rate below 50% triggers recommendation."""
+    _insert_daily(store, date_str=today_minus(1), provider="anthropic",
+                  model="claude-sonnet-4-6", source="app",
+                  call_count=200, input_tokens=10000, cache_read_tokens=4000)
+    recs = generate_recommendations(store)
+    # 4000 / (4000+10000) = 28.6% — should trigger
+    assert any(r.type == "low_cache_hit_rate" for r in recs)
+
+
+def test_low_cache_hit_rate_above_50pct_no_trigger(store):
+    """Hit rate above 50% does NOT trigger."""
+    _insert_daily(store, date_str=today_minus(1), provider="anthropic",
+                  model="claude-sonnet-4-6", source="app",
+                  call_count=200, input_tokens=5000, cache_read_tokens=6000)
+    recs = generate_recommendations(store)
+    # 6000 / (6000+5000) = 54.5% — should NOT trigger
+    assert not any(r.type == "low_cache_hit_rate" for r in recs)
+
+
+def test_bloated_prompts_detected(store):
+    """High input/output ratio triggers bloated_prompts."""
+    _insert_daily(store, date_str=today_minus(1), provider="anthropic",
+                  model="claude-sonnet-4-6", source="verbose-app",
+                  call_count=100, input_tokens=100000, output_tokens=2000)
+    recs = generate_recommendations(store)
+    assert any(r.type == "bloated_prompts" for r in recs)
+
+
+def test_bloated_prompts_normal_ratio(store):
+    """Normal input/output ratio does NOT trigger."""
+    _insert_daily(store, date_str=today_minus(1), provider="anthropic",
+                  model="claude-sonnet-4-6", source="normal-app",
+                  call_count=100, input_tokens=10000, output_tokens=5000)
+    recs = generate_recommendations(store)
+    assert not any(r.type == "bloated_prompts" for r in recs)
+
+
+def test_caching_opportunity_openai(store):
+    """OpenAI with high calls and zero cache reads triggers caching_opportunity."""
+    _insert_daily(store, date_str=today_minus(1), provider="openai",
+                  model="gpt-4o", source="myapp",
+                  call_count=300, cache_read_tokens=0)
+    recs = generate_recommendations(store)
+    assert any(r.type == "caching_opportunity" for r in recs)
+
+
+def test_caching_opportunity_not_for_anthropic(store):
+    """Anthropic does NOT trigger caching_opportunity (only openai/google)."""
+    _insert_daily(store, date_str=today_minus(1), provider="anthropic",
+                  model="claude-sonnet-4-6", source="myapp",
+                  call_count=300, cache_read_tokens=0)
+    recs = generate_recommendations(store)
+    assert not any(r.type == "caching_opportunity" for r in recs)
+
+
+def test_source_consolidation(store):
+    """3+ sources on same provider/model triggers source_consolidation."""
+    for src in ["app1", "app2", "app3"]:
+        _insert_daily(store, date_str=today_minus(1), provider="anthropic",
+                      model="claude-sonnet-4-6", source=src,
+                      call_count=10, cost_usd=0.10)
+    recs = generate_recommendations(store)
+    assert any(r.type == "source_consolidation" for r in recs)
+
+
+def test_source_consolidation_not_with_2(store):
+    """Only 2 sources does NOT trigger."""
+    for src in ["app1", "app2"]:
+        _insert_daily(store, date_str=today_minus(1), provider="anthropic",
+                      model="claude-sonnet-4-6", source=src,
+                      call_count=10, cost_usd=0.10)
+    recs = generate_recommendations(store)
+    assert not any(r.type == "source_consolidation" for r in recs)
+
+
+def test_cache_write_waste_low_ratio(store):
+    """Read/write ratio < 10% triggers cache_write_waste."""
+    _insert_daily(store, date_str=today_minus(1), provider="anthropic",
+                  model="claude-sonnet-4-6", source="waste-app",
+                  cache_write_tokens=100000, cache_read_tokens=5000)
+    recs = generate_recommendations(store)
+    assert any(r.type == "cache_write_waste" for r in recs)
+
+
+def test_downsell_at_threshold(store):
+    """$0.50 spend meets the $0.50 threshold for downsell."""
+    _insert_daily(store, date_str=today_minus(1), provider="openai",
+                  model="gpt-4o", source="myapp",
+                  call_count=10, cost_usd=0.50)
+    recs = generate_recommendations(store)
+    assert any(r.type == "downsell_opportunity" for r in recs)

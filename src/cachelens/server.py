@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import threading
@@ -21,6 +23,7 @@ from .parser import parse_input
 from .pricing import PricingTable
 from .proxy import handle_proxy_request
 from .recommender import generate_recommendations
+from .sessions import detect_sessions
 from .store import UsageStore
 
 # Default DB path used when no store is injected (production mode)
@@ -32,6 +35,27 @@ _WS_MAX_CONNECTIONS = 10
 class AnalyzeRequest(BaseModel):
     input: str = Field(..., min_length=1, max_length=2_000_000)
     min_tokens: int = Field(default=50, ge=1, le=10_000)
+
+
+def _compute_trend(data: list[dict]) -> str:
+    """Simple linear regression slope on cache_hit_pct series."""
+    if len(data) < 3:
+        return "insufficient_data"
+    n = len(data)
+    xs = list(range(n))
+    ys = [d["cache_hit_pct"] for d in data]
+    x_mean = sum(xs) / n
+    y_mean = sum(ys) / n
+    numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys))
+    denominator = sum((x - x_mean) ** 2 for x in xs)
+    if denominator == 0:
+        return "stable"
+    slope = numerator / denominator
+    if slope > 1:
+        return "improving"
+    if slope < -1:
+        return "degrading"
+    return "stable"
 
 
 @asynccontextmanager
@@ -300,6 +324,273 @@ def create_app(
         })
 
     # ------------------------------------------------------------------
+    # CSV Export (Phase 2)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/export/csv")
+    def api_export_csv(request: Request, days: int = 30) -> Response:
+        if days not in _VALID_DAYS:
+            days = 30
+        s: UsageStore = request.app.state.store
+        p: PricingTable = request.app.state.pricing
+        since = (date.today() - timedelta(days=days)).isoformat()
+        rows = s.query_daily_agg_since(since)
+
+        today = date.today().isoformat()
+        today_in_agg = {(r["provider"], r["model"], r["source"]) for r in rows if r["date"] == today}
+        for r in s.aggregate_calls_for_date(today):
+            if (r["provider"], r["model"], r["source"]) not in today_in_agg:
+                rows.append({
+                    "date": today,
+                    "provider": r["provider"],
+                    "model": r["model"],
+                    "source": r["source"],
+                    "call_count": r["call_count"],
+                    "input_tokens": r["input_tokens"],
+                    "output_tokens": r["output_tokens"],
+                    "cache_read_tokens": r["cache_read_tokens"],
+                    "cache_write_tokens": r["cache_write_tokens"],
+                    "cost_usd": r["cost_usd"],
+                })
+
+        for r in rows:
+            r["savings_usd"] = p.savings_usd(r["provider"], r["model"], r["cache_read_tokens"])
+
+        rows.sort(key=lambda r: r["date"])
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow([
+            "date", "provider", "model", "source", "call_count",
+            "input_tokens", "output_tokens", "cache_read_tokens",
+            "cache_write_tokens", "cost_usd", "savings_usd",
+        ])
+        for r in rows:
+            writer.writerow([
+                r.get("date", ""), r.get("provider", ""), r.get("model", ""),
+                r.get("source", ""), r.get("call_count", 0),
+                r.get("input_tokens", 0), r.get("output_tokens", 0),
+                r.get("cache_read_tokens", 0), r.get("cache_write_tokens", 0),
+                f"{r.get('cost_usd', 0.0):.6f}", f"{r.get('savings_usd', 0.0):.6f}",
+            ])
+
+        filename = f"cachelens-export-{date.today().isoformat()}.csv"
+        return Response(
+            content=buf.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    # ------------------------------------------------------------------
+    # Cache Hit Rate Trend (Phase 3)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/usage/cache-trend")
+    def api_cache_trend(request: Request, days: int = 30) -> JSONResponse:
+        if days not in _VALID_DAYS:
+            days = 30
+        s: UsageStore = request.app.state.store
+        data_points = s.daily_cache_hit_trend(days)
+
+        result = []
+        for dp in data_points:
+            total = (dp["input_tokens"] or 0) + (dp["cache_read_tokens"] or 0)
+            pct = (dp["cache_read_tokens"] or 0) / total * 100 if total > 0 else 0
+            result.append({
+                "date": dp["date"],
+                "cache_hit_pct": round(pct, 1),
+                "total_input_tokens": dp["input_tokens"] or 0,
+                "cache_read_tokens": dp["cache_read_tokens"] or 0,
+            })
+
+        trend = _compute_trend(result)
+        return JSONResponse(content={
+            "days": days,
+            "trend": trend,
+            "data": result,
+        })
+
+    # ------------------------------------------------------------------
+    # Model Comparison (Phase 4)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/usage/compare")
+    def api_model_compare(
+        request: Request,
+        from_model: str = "",
+        to_model: str = "",
+        days: int = 30,
+    ) -> JSONResponse:
+        if not from_model or not to_model:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "from_model and to_model are required"},
+            )
+        if from_model == to_model:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "from_model and to_model must differ"},
+            )
+
+        s: UsageStore = request.app.state.store
+        p: PricingTable = request.app.state.pricing
+        since = (date.today() - timedelta(days=days)).isoformat()
+        rows = s.query_daily_agg_since(since)
+
+        today = date.today().isoformat()
+        for r in s.aggregate_calls_for_date(today):
+            rows.append({
+                "date": today,
+                "provider": r["provider"],
+                "model": r["model"],
+                "source": r["source"],
+                "call_count": r["call_count"],
+                "input_tokens": r["input_tokens"],
+                "output_tokens": r["output_tokens"],
+                "cache_read_tokens": r["cache_read_tokens"],
+                "cache_write_tokens": r["cache_write_tokens"],
+                "cost_usd": r["cost_usd"],
+            })
+
+        matching = [r for r in rows if r["model"] == from_model]
+        if not matching:
+            return JSONResponse(content={
+                "from_model": from_model,
+                "to_model": to_model,
+                "actual_cost_usd": 0,
+                "hypothetical_cost_usd": 0,
+                "savings_usd": 0,
+                "savings_pct": 0,
+                "call_count": 0,
+            })
+
+        total_cost = sum(r["cost_usd"] or 0 for r in matching)
+        total_calls = sum(r["call_count"] or 0 for r in matching)
+        total_input = sum(r["input_tokens"] or 0 for r in matching)
+        total_output = sum(r["output_tokens"] or 0 for r in matching)
+        total_cache_read = sum(r["cache_read_tokens"] or 0 for r in matching)
+        total_cache_write = sum(r["cache_write_tokens"] or 0 for r in matching)
+
+        provider = matching[0]["provider"]
+        hypothetical = p.cost_usd(
+            provider, to_model,
+            total_input, total_output, total_cache_read, total_cache_write,
+        )
+
+        savings = total_cost - hypothetical
+        savings_pct = (savings / total_cost * 100) if total_cost > 0 else 0
+
+        return JSONResponse(content={
+            "from_model": from_model,
+            "to_model": to_model,
+            "actual_cost_usd": round(total_cost, 4),
+            "hypothetical_cost_usd": round(hypothetical, 4),
+            "savings_usd": round(savings, 4),
+            "savings_pct": round(savings_pct, 1),
+            "call_count": total_calls,
+            "total_input_tokens": total_input,
+            "total_output_tokens": total_output,
+        })
+
+    # ------------------------------------------------------------------
+    # Sessions (Phase 5)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/usage/sessions")
+    def api_sessions(
+        request: Request,
+        days: int = 1,
+        source: str = "",
+    ) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        calls = s.raw_calls_for_period(days, source=source if source else None)
+        sessions = detect_sessions(calls)
+        return JSONResponse(content={
+            "sessions": sessions,
+            "note": "Sessions are detected from raw calls (24h retention)."
+                    if days > 1
+                    else None,
+        })
+
+    # ------------------------------------------------------------------
+    # Settings: Alerts (Phase 6)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/settings/alerts")
+    def api_get_alerts(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        threshold = s.get_setting("alerts.daily_cost_threshold")
+        enabled = s.get_setting("alerts.enabled")
+        return JSONResponse(content={
+            "daily_cost_threshold": float(threshold) if threshold else None,
+            "alerts_enabled": enabled == "true" if enabled else False,
+        })
+
+    @app.put("/api/settings/alerts")
+    async def api_set_alerts(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        body = await request.json()
+        if "daily_cost_threshold" in body:
+            val = body["daily_cost_threshold"]
+            if val is not None:
+                s.set_setting("alerts.daily_cost_threshold", str(float(val)))
+            else:
+                s.delete_setting("alerts.daily_cost_threshold")
+        if "alerts_enabled" in body:
+            s.set_setting("alerts.enabled", "true" if body["alerts_enabled"] else "false")
+        return JSONResponse(content={"status": "ok"})
+
+    # ------------------------------------------------------------------
+    # Settings: Budget (Phase 7)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/settings/budget")
+    def api_get_budget(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        daily = s.get_setting("budget.daily_limit_usd")
+        monthly = s.get_setting("budget.monthly_limit_usd")
+        enabled = s.get_setting("budget.enabled")
+        return JSONResponse(content={
+            "daily_limit_usd": float(daily) if daily else None,
+            "monthly_limit_usd": float(monthly) if monthly else None,
+            "enabled": enabled == "true" if enabled else False,
+        })
+
+    @app.put("/api/settings/budget")
+    async def api_set_budget(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        body = await request.json()
+        if "daily_limit_usd" in body:
+            val = body["daily_limit_usd"]
+            if val is not None:
+                s.set_setting("budget.daily_limit_usd", str(float(val)))
+            else:
+                s.delete_setting("budget.daily_limit_usd")
+        if "monthly_limit_usd" in body:
+            val = body["monthly_limit_usd"]
+            if val is not None:
+                s.set_setting("budget.monthly_limit_usd", str(float(val)))
+            else:
+                s.delete_setting("budget.monthly_limit_usd")
+        if "enabled" in body:
+            s.set_setting("budget.enabled", "true" if body["enabled"] else "false")
+        return JSONResponse(content={"status": "ok"})
+
+    @app.get("/api/usage/budget-status")
+    def api_budget_status(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        daily_limit = s.get_setting("budget.daily_limit_usd")
+        monthly_limit = s.get_setting("budget.monthly_limit_usd")
+        enabled = s.get_setting("budget.enabled") == "true"
+        return JSONResponse(content={
+            "enabled": enabled,
+            "daily_spend_usd": round(s.daily_spend_usd(), 4),
+            "monthly_spend_usd": round(s.monthly_spend_usd(), 4),
+            "daily_limit_usd": float(daily_limit) if daily_limit else None,
+            "monthly_limit_usd": float(monthly_limit) if monthly_limit else None,
+        })
+
+    # ------------------------------------------------------------------
     # WebSocket live feed
     # ------------------------------------------------------------------
 
@@ -343,6 +634,31 @@ def create_app(
                 except Exception:
                     dead.add(ws)
             ws_clients.difference_update(dead)
+
+            # Cost alert check (Phase 6)
+            store = request.app.state.store
+            threshold_str = store.get_setting("alerts.daily_cost_threshold")
+            alerts_enabled = store.get_setting("alerts.enabled") == "true"
+            if alerts_enabled and threshold_str:
+                threshold = float(threshold_str)
+                daily_cost = store.daily_spend_usd()
+                if daily_cost >= threshold:
+                    alert_key = f"alert_sent_{date.today().isoformat()}_{threshold}"
+                    if not hasattr(request.app.state, "_alert_cooldown"):
+                        request.app.state._alert_cooldown = set()
+                    if alert_key not in request.app.state._alert_cooldown:
+                        request.app.state._alert_cooldown.add(alert_key)
+                        alert_event = {
+                            "type": "cost_alert",
+                            "daily_cost_usd": round(daily_cost, 4),
+                            "threshold_usd": threshold,
+                            "message": f"Daily spend ${daily_cost:.2f} exceeded threshold ${threshold:.2f}",
+                        }
+                        for ws in list(ws_clients):
+                            try:
+                                await ws.send_json(alert_event)
+                            except Exception:
+                                pass
 
         return await handle_proxy_request(
             method=request.method,

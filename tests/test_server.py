@@ -401,6 +401,205 @@ def test_proxy_route_unknown_provider_returns_error(client: TestClient) -> None:
     assert response.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# /api/export/csv (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_csv_export_empty_store(client: TestClient) -> None:
+    """GET /api/export/csv returns CSV with headers only on empty store."""
+    response = client.get("/api/export/csv")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "Content-Disposition" in response.headers
+    lines = response.text.strip().split("\n")
+    assert len(lines) == 1  # header only
+
+
+def test_csv_export_with_data(client: TestClient, test_store: UsageStore) -> None:
+    """GET /api/export/csv returns CSV with data rows."""
+    test_store.upsert_daily_agg(
+        date="2026-03-10", provider="anthropic", model="claude-sonnet-4-6",
+        source="app", call_count=5, input_tokens=5000, output_tokens=1000,
+        cache_read_tokens=2000, cache_write_tokens=0, cost_usd=0.05,
+    )
+    response = client.get("/api/export/csv?days=365")
+    assert response.status_code == 200
+    lines = response.text.strip().split("\n")
+    assert len(lines) >= 2  # header + at least one row
+    assert "savings_usd" in lines[0]
+
+
+def test_csv_export_content_disposition(client: TestClient) -> None:
+    """GET /api/export/csv has proper Content-Disposition header."""
+    response = client.get("/api/export/csv")
+    assert "attachment" in response.headers.get("Content-Disposition", "")
+    assert "cachelens-export" in response.headers.get("Content-Disposition", "")
+
+
+# ---------------------------------------------------------------------------
+# /api/usage/cache-trend (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_cache_trend_empty(client: TestClient) -> None:
+    """GET /api/usage/cache-trend returns trend with no data."""
+    response = client.get("/api/usage/cache-trend")
+    assert response.status_code == 200
+    body = response.json()
+    assert "trend" in body
+    assert "data" in body
+    assert body["days"] == 30
+
+
+def test_cache_trend_with_data(client: TestClient, test_store: UsageStore) -> None:
+    """GET /api/usage/cache-trend returns trend data points."""
+    from datetime import date, timedelta
+    for i in range(5):
+        d = (date.today() - timedelta(days=i + 1)).isoformat()
+        test_store.upsert_daily_agg(
+            date=d, provider="anthropic", model="claude-sonnet-4-6",
+            source="app", call_count=10, input_tokens=1000,
+            output_tokens=500, cache_read_tokens=500, cache_write_tokens=0,
+            cost_usd=0.01,
+        )
+    response = client.get("/api/usage/cache-trend")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["data"]) >= 1
+    assert "cache_hit_pct" in body["data"][0]
+
+
+# ---------------------------------------------------------------------------
+# /api/usage/compare (Phase 4)
+# ---------------------------------------------------------------------------
+
+
+def test_compare_missing_params(client: TestClient) -> None:
+    """GET /api/usage/compare without params returns 400."""
+    response = client.get("/api/usage/compare")
+    assert response.status_code == 400
+
+
+def test_compare_same_model(client: TestClient) -> None:
+    """GET /api/usage/compare with same model returns 400."""
+    response = client.get("/api/usage/compare?from_model=gpt-4o&to_model=gpt-4o")
+    assert response.status_code == 400
+
+
+def test_compare_no_data(client: TestClient) -> None:
+    """GET /api/usage/compare with valid params but no data returns zeros."""
+    response = client.get("/api/usage/compare?from_model=gpt-4o&to_model=gpt-4o-mini")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["call_count"] == 0
+    assert body["actual_cost_usd"] == 0
+
+
+# ---------------------------------------------------------------------------
+# /api/usage/sessions (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def test_sessions_empty(client: TestClient) -> None:
+    """GET /api/usage/sessions returns empty sessions."""
+    response = client.get("/api/usage/sessions")
+    assert response.status_code == 200
+    body = response.json()
+    assert "sessions" in body
+    assert body["sessions"] == []
+
+
+def test_sessions_with_calls(client: TestClient, test_store: UsageStore) -> None:
+    """GET /api/usage/sessions returns detected sessions from raw calls."""
+    import time
+    now = int(time.time())
+    for i in range(3):
+        test_store.insert_call(
+            ts=now + i * 60,
+            provider="anthropic", model="claude-sonnet-4-6",
+            source="test-session", source_tag=None,
+            input_tokens=100, output_tokens=50,
+            cache_read_tokens=0, cache_write_tokens=0,
+            cost_usd=0.01, endpoint="/v1/messages",
+            request_hash=f"sha256:sess-{i}",
+        )
+    response = client.get("/api/usage/sessions?days=1")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["sessions"]) >= 1
+
+
+# ---------------------------------------------------------------------------
+# /api/settings/alerts (Phase 6)
+# ---------------------------------------------------------------------------
+
+
+def test_get_alerts_default(client: TestClient) -> None:
+    """GET /api/settings/alerts returns defaults."""
+    response = client.get("/api/settings/alerts")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["alerts_enabled"] is False
+    assert body["daily_cost_threshold"] is None
+
+
+def test_set_and_get_alerts(client: TestClient) -> None:
+    """PUT then GET /api/settings/alerts persists settings."""
+    client.put("/api/settings/alerts", json={
+        "alerts_enabled": True,
+        "daily_cost_threshold": 5.0,
+    })
+    response = client.get("/api/settings/alerts")
+    body = response.json()
+    assert body["alerts_enabled"] is True
+    assert body["daily_cost_threshold"] == 5.0
+
+
+# ---------------------------------------------------------------------------
+# /api/settings/budget (Phase 7)
+# ---------------------------------------------------------------------------
+
+
+def test_get_budget_default(client: TestClient) -> None:
+    """GET /api/settings/budget returns defaults."""
+    response = client.get("/api/settings/budget")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enabled"] is False
+    assert body["daily_limit_usd"] is None
+    assert body["monthly_limit_usd"] is None
+
+
+def test_set_and_get_budget(client: TestClient) -> None:
+    """PUT then GET /api/settings/budget persists settings."""
+    client.put("/api/settings/budget", json={
+        "enabled": True,
+        "daily_limit_usd": 10.0,
+        "monthly_limit_usd": 100.0,
+    })
+    response = client.get("/api/settings/budget")
+    body = response.json()
+    assert body["enabled"] is True
+    assert body["daily_limit_usd"] == 10.0
+    assert body["monthly_limit_usd"] == 100.0
+
+
+def test_budget_status_endpoint(client: TestClient) -> None:
+    """GET /api/usage/budget-status returns current spend."""
+    response = client.get("/api/usage/budget-status")
+    assert response.status_code == 200
+    body = response.json()
+    assert "enabled" in body
+    assert "daily_spend_usd" in body
+    assert "monthly_spend_usd" in body
+
+
+# ---------------------------------------------------------------------------
+# Proxy routes
+# ---------------------------------------------------------------------------
+
+
 def test_proxy_route_known_provider_route_is_registered(
     test_store: UsageStore, pricing: PricingTable, monkeypatch: pytest.MonkeyPatch
 ) -> None:

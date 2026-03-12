@@ -461,9 +461,11 @@ function initDashboard() {
   loadTokenChart(currentChartRange);
   loadProviderBreakdown();
   loadSourceBreakdown();
+  loadCacheTrend();
+  loadSessions();
+  loadBudgetStatus();
   backfillLiveFeed();
   connectLiveFeed();
-  // Poll every 10s so calls appear even when the WebSocket is unavailable
   setInterval(backfillLiveFeed, 10000);
 
   document.querySelectorAll('#chartToggle .tab').forEach(btn => {
@@ -1009,6 +1011,278 @@ function applyDeepDiveFilters(filters) {
   if (filters.to) el('filterTo').value = filters.to;
   loadDeepDive();
 }
+
+// ─── Cache Hit Rate Trend (Phase 3) ─────────────────────────────────────────
+
+let cacheTrendChart = null;
+
+async function loadCacheTrend() {
+  try {
+    const r = await fetch(apiUrl('/api/usage/cache-trend?days=30'));
+    if (!r.ok) return;
+    const { trend, data } = await r.json();
+
+    const meta = el('cacheTrendMeta');
+    if (meta) {
+      const arrows = { improving: 'Improving', degrading: 'Degrading', stable: 'Stable', insufficient_data: 'Not enough data' };
+      meta.textContent = arrows[trend] || trend;
+    }
+
+    if (!data || data.length === 0) return;
+
+    const canvas = el('cacheTrendChart');
+    if (!canvas) return;
+    if (cacheTrendChart) { cacheTrendChart.destroy(); cacheTrendChart = null; }
+
+    cacheTrendChart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: data.map(d => d.date),
+        datasets: [{
+          label: 'Cache Hit %',
+          data: data.map(d => d.cache_hit_pct),
+          borderColor: 'rgba(46,233,166,0.85)',
+          backgroundColor: 'rgba(46,233,166,0.15)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: 'rgba(231,237,246,0.85)' } }
+        },
+        scales: {
+          x: { ticks: { color: 'rgba(154,167,184,0.9)', maxRotation: 45 }, grid: { color: 'rgba(255,255,255,0.06)' } },
+          y: { min: 0, max: 100, ticks: { color: 'rgba(154,167,184,0.9)', callback: v => v + '%' }, grid: { color: 'rgba(255,255,255,0.06)' } }
+        }
+      }
+    });
+  } catch { /* silently fail */ }
+}
+
+// ─── Sessions (Phase 5) ─────────────────────────────────────────────────────
+
+async function loadSessions() {
+  const tbody = el('sessionsBody');
+  if (!tbody) return;
+  try {
+    const r = await fetch(apiUrl('/api/usage/sessions?days=1'));
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const { sessions } = await r.json();
+    if (!sessions || sessions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="table-empty">No sessions detected (raw calls only, 24h window).</td></tr>';
+      return;
+    }
+    tbody.innerHTML = sessions.map(s => {
+      const start = s.start_time ? new Date(s.start_time).toLocaleString() : '—';
+      const dur = s.duration_minutes != null ? s.duration_minutes + ' min' : '—';
+      return `<tr>
+        <td>${escapeHtml(s.source || '—')}</td>
+        <td>${escapeHtml(start)}</td>
+        <td>${dur}</td>
+        <td>${fmtInt(s.call_count)}</td>
+        <td class="mono-sm">${escapeHtml((s.models || []).join(', '))}</td>
+        <td>${fmtCost(s.total_cost_usd)}</td>
+      </tr>`;
+    }).join('');
+  } catch {
+    tbody.innerHTML = '<tr><td colspan="6" class="table-empty">Failed to load sessions.</td></tr>';
+  }
+}
+
+// ─── Budget Status (Phase 7) ────────────────────────────────────────────────
+
+async function loadBudgetStatus() {
+  try {
+    const r = await fetch(apiUrl('/api/usage/budget-status'));
+    if (!r.ok) return;
+    const data = await r.json();
+    const bar = el('budgetStatusBar');
+    if (!bar) return;
+
+    if (!data.enabled) { bar.classList.add('hidden'); return; }
+    bar.classList.remove('hidden');
+
+    const dailyFill = el('budgetDailyFill');
+    const dailyText = el('budgetDailyText');
+    const monthlyFill = el('budgetMonthlyFill');
+    const monthlyText = el('budgetMonthlyText');
+
+    if (data.daily_limit_usd) {
+      const pct = Math.min(100, (data.daily_spend_usd / data.daily_limit_usd) * 100);
+      if (dailyFill) { dailyFill.style.width = pct + '%'; dailyFill.className = 'budget-bar__fill' + (pct >= 90 ? ' over' : ''); }
+      if (dailyText) dailyText.textContent = `$${data.daily_spend_usd.toFixed(2)} / $${data.daily_limit_usd.toFixed(2)}`;
+    } else {
+      if (dailyText) dailyText.textContent = 'No limit set';
+    }
+
+    if (data.monthly_limit_usd) {
+      const pct = Math.min(100, (data.monthly_spend_usd / data.monthly_limit_usd) * 100);
+      if (monthlyFill) { monthlyFill.style.width = pct + '%'; monthlyFill.className = 'budget-bar__fill' + (pct >= 90 ? ' over' : ''); }
+      if (monthlyText) monthlyText.textContent = `$${data.monthly_spend_usd.toFixed(2)} / $${data.monthly_limit_usd.toFixed(2)}`;
+    } else {
+      if (monthlyText) monthlyText.textContent = 'No limit set';
+    }
+  } catch { /* silently fail */ }
+}
+
+// ─── Settings Panel ─────────────────────────────────────────────────────────
+
+const settingsToggle = el('settingsToggle');
+const settingsPanel = el('settingsPanel');
+const settingsClose = el('settingsClose');
+
+if (settingsToggle && settingsPanel) {
+  settingsToggle.addEventListener('click', async () => {
+    settingsPanel.classList.toggle('hidden');
+    if (!settingsPanel.classList.contains('hidden')) {
+      await loadAlertSettings();
+      await loadBudgetSettings();
+    }
+  });
+}
+if (settingsClose && settingsPanel) {
+  settingsClose.addEventListener('click', () => settingsPanel.classList.add('hidden'));
+}
+
+async function loadAlertSettings() {
+  try {
+    const r = await fetch(apiUrl('/api/settings/alerts'));
+    if (!r.ok) return;
+    const data = await r.json();
+    const enabled = el('alertsEnabled');
+    const threshold = el('alertThreshold');
+    if (enabled) enabled.checked = !!data.alerts_enabled;
+    if (threshold && data.daily_cost_threshold != null) threshold.value = data.daily_cost_threshold;
+  } catch { /* ignore */ }
+}
+
+async function loadBudgetSettings() {
+  try {
+    const r = await fetch(apiUrl('/api/settings/budget'));
+    if (!r.ok) return;
+    const data = await r.json();
+    const enabled = el('budgetEnabled');
+    const daily = el('budgetDaily');
+    const monthly = el('budgetMonthly');
+    if (enabled) enabled.checked = !!data.enabled;
+    if (daily && data.daily_limit_usd != null) daily.value = data.daily_limit_usd;
+    if (monthly && data.monthly_limit_usd != null) monthly.value = data.monthly_limit_usd;
+  } catch { /* ignore */ }
+}
+
+const saveAlertsBtn = el('saveAlerts');
+if (saveAlertsBtn) {
+  saveAlertsBtn.addEventListener('click', async () => {
+    const enabled = el('alertsEnabled')?.checked || false;
+    const threshold = parseFloat(el('alertThreshold')?.value) || null;
+    await fetch(apiUrl('/api/settings/alerts'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alerts_enabled: enabled, daily_cost_threshold: threshold }),
+    });
+    saveAlertsBtn.textContent = 'Saved!';
+    setTimeout(() => saveAlertsBtn.textContent = 'Save Alerts', 1200);
+  });
+}
+
+const saveBudgetBtn = el('saveBudget');
+if (saveBudgetBtn) {
+  saveBudgetBtn.addEventListener('click', async () => {
+    const enabled = el('budgetEnabled')?.checked || false;
+    const daily = parseFloat(el('budgetDaily')?.value) || null;
+    const monthly = parseFloat(el('budgetMonthly')?.value) || null;
+    await fetch(apiUrl('/api/settings/budget'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled, daily_limit_usd: daily, monthly_limit_usd: monthly }),
+    });
+    saveBudgetBtn.textContent = 'Saved!';
+    setTimeout(() => saveBudgetBtn.textContent = 'Save Budget', 1200);
+    loadBudgetStatus();
+  });
+}
+
+// ─── Cost Alert Banner ──────────────────────────────────────────────────────
+
+const dismissAlertBtn = el('dismissAlert');
+if (dismissAlertBtn) {
+  dismissAlertBtn.addEventListener('click', () => {
+    const banner = el('costAlertBanner');
+    if (banner) banner.classList.add('hidden');
+  });
+}
+
+// ─── CSV Export (Phase 2) ───────────────────────────────────────────────────
+
+const exportCsvBtn = el('exportCsv');
+if (exportCsvBtn) {
+  exportCsvBtn.addEventListener('click', () => {
+    window.open(apiUrl('/api/export/csv?days=30'), '_blank');
+  });
+}
+
+// ─── Model Comparison (Phase 4) ─────────────────────────────────────────────
+
+async function populateModelDropdowns() {
+  try {
+    const r = await fetch(apiUrl('/api/usage/daily?days=365'));
+    if (!r.ok) return;
+    const { rows } = await r.json();
+    const models = [...new Set(rows.map(r => r.model).filter(Boolean))].sort();
+    const fromSel = el('compareFrom');
+    const toSel = el('compareTo');
+    if (!fromSel || !toSel) return;
+    for (const m of models) {
+      fromSel.appendChild(Object.assign(document.createElement('option'), { value: m, textContent: m }));
+      toSel.appendChild(Object.assign(document.createElement('option'), { value: m, textContent: m }));
+    }
+  } catch { /* ignore */ }
+}
+
+const compareBtn = el('compareModels');
+if (compareBtn) {
+  compareBtn.addEventListener('click', async () => {
+    const from = el('compareFrom')?.value;
+    const to = el('compareTo')?.value;
+    const resultDiv = el('compareResult');
+    if (!from || !to || !resultDiv) return;
+
+    resultDiv.classList.remove('hidden');
+    resultDiv.innerHTML = '<div class="meta">Comparing…</div>';
+
+    try {
+      const r = await fetch(apiUrl(`/api/usage/compare?from_model=${encodeURIComponent(from)}&to_model=${encodeURIComponent(to)}&days=30`));
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        resultDiv.innerHTML = `<div class="meta" style="color:var(--danger)">${escapeHtml(err.error || 'Error')}</div>`;
+        return;
+      }
+      const data = await r.json();
+      const savingsColor = data.savings_usd > 0 ? 'var(--accent2)' : 'var(--danger)';
+      resultDiv.innerHTML = `
+        <div class="compare-grid">
+          <div><span class="meta">Actual cost (${escapeHtml(from)})</span><br><strong>${fmtCost(data.actual_cost_usd)}</strong></div>
+          <div><span class="meta">Hypothetical (${escapeHtml(to)})</span><br><strong>${fmtCost(data.hypothetical_cost_usd)}</strong></div>
+          <div><span class="meta">Savings</span><br><strong style="color:${savingsColor}">${fmtCost(data.savings_usd)} (${data.savings_pct.toFixed(1)}%)</strong></div>
+          <div><span class="meta">Calls</span><br><strong>${fmtInt(data.call_count)}</strong></div>
+        </div>
+      `;
+    } catch (err) {
+      resultDiv.innerHTML = `<div class="meta" style="color:var(--danger)">Failed: ${escapeHtml(err.message)}</div>`;
+    }
+  });
+}
+
+// Populate model dropdowns when Deep Dive page loads
+const origLoadDeepDive = loadDeepDive;
+loadDeepDive = async function() {
+  await origLoadDeepDive();
+  populateModelDropdowns();
+};
 
 // Start on dashboard — must be last so all let/const variables are initialized
 switchPage('dashboard');
