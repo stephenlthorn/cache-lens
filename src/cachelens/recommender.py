@@ -33,6 +33,24 @@ def generate_recommendations(store: UsageStore) -> list[Recommendation]:
 
     raw_rows = store.query_daily_agg_since(cutoff)
 
+    # Supplement with today's live data (not yet in daily_agg until nightly rollup)
+    today = date.today().isoformat()
+    today_in_agg = {(r["provider"], r["model"], r["source"]) for r in raw_rows if r["date"] == today}
+    for r in store.aggregate_calls_for_date(today):
+        if (r["provider"], r["model"], r["source"]) not in today_in_agg:
+            raw_rows.append({
+                "date": today,
+                "provider": r["provider"],
+                "model": r["model"],
+                "source": r["source"],
+                "call_count": r["call_count"],
+                "input_tokens": r["input_tokens"],
+                "output_tokens": r["output_tokens"],
+                "cache_read_tokens": r["cache_read_tokens"],
+                "cache_write_tokens": r["cache_write_tokens"],
+                "cost_usd": r["cost_usd"],
+            })
+
     # Aggregate by (provider, model, source) across the 30-day window
     agg: dict[tuple, dict] = {}
     for row in raw_rows:

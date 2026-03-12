@@ -9,10 +9,10 @@ import hashlib
 import json
 import time
 from collections.abc import Awaitable, Callable
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 
 from cachelens.detector import ParsedProxy, parse_proxy_path
 from cachelens.pricing import PricingTable
@@ -347,7 +347,7 @@ async def handle_proxy_request(
         streaming = is_streaming_request(body, parsed.provider)
 
     if streaming:
-        return _build_streaming_response(
+        return _UpstreamStreamResponse(
             method=method,
             url=upstream_url,
             headers=forward_headers,
@@ -376,49 +376,90 @@ async def handle_proxy_request(
             )
 
 
-def _build_streaming_response(
-    *,
-    method: str,
-    url: str,
-    headers: dict[str, str],
-    body: bytes,
-    parsed: ParsedProxy,
-    request_hash: str,
-    endpoint: str,
-    store: UsageStore,
-    pricing: PricingTable,
-    on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
-) -> StreamingResponse:
-    """Build a StreamingResponse whose generator owns the client lifecycle."""
-    client = httpx.AsyncClient(timeout=300.0, follow_redirects=True)
+class _UpstreamStreamResponse:
+    """ASGI response that opens an upstream stream and forwards its status,
+    headers, and body chunks to the downstream client.
 
-    async def stream_gen() -> AsyncIterator[bytes]:
+    This replaces the old StreamingResponse approach so that upstream HTTP
+    status codes (e.g. 429, 500) and headers are correctly propagated instead
+    of being silently overridden with a local 200.
+    """
+
+    def __init__(
+        self,
+        *,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes,
+        parsed: ParsedProxy,
+        request_hash: str,
+        endpoint: str,
+        store: UsageStore,
+        pricing: PricingTable,
+        on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
+    ) -> None:
+        self._method = method
+        self._url = url
+        self._headers = headers
+        self._body = body
+        self._parsed = parsed
+        self._request_hash = request_hash
+        self._endpoint = endpoint
+        self._store = store
+        self._pricing = pricing
+        self._on_call_recorded = on_call_recorded
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        client = httpx.AsyncClient(timeout=300.0, follow_redirects=True)
         try:
-            async with client.stream(method, url, headers=headers, content=body) as response:
+            async with client.stream(
+                self._method, self._url,
+                headers=self._headers, content=self._body,
+            ) as response:
+                filtered = _filter_response_headers(dict(response.headers))
+                if not any(k.lower() == "content-type" for k in filtered):
+                    filtered["content-type"] = "text/event-stream"
+
+                asgi_headers = [
+                    (k.lower().encode("latin-1"), v.encode("latin-1"))
+                    for k, v in filtered.items()
+                ]
+                await send({
+                    "type": "http.response.start",
+                    "status": response.status_code,
+                    "headers": asgi_headers,
+                })
+
                 chunks: list[bytes] = []
                 try:
                     async for chunk in response.aiter_bytes():
                         chunks.append(chunk)
-                        yield chunk
+                        await send({
+                            "type": "http.response.body",
+                            "body": chunk,
+                            "more_body": True,
+                        })
                 except Exception:
-                    return
+                    pass
 
-                usage = extract_usage_from_sse_chunks(chunks, parsed.provider)
-                if usage is not None:
-                    event = _record_call(
-                        store=store,
-                        pricing=pricing,
-                        parsed=parsed,
-                        endpoint=endpoint,
-                        request_hash=request_hash,
-                        usage=usage,
-                    )
-                    if on_call_recorded is not None:
-                        await on_call_recorded(event)
+                await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+                if response.is_success:
+                    usage = extract_usage_from_sse_chunks(chunks, self._parsed.provider)
+                    if usage is not None:
+                        event = _record_call(
+                            store=self._store,
+                            pricing=self._pricing,
+                            parsed=self._parsed,
+                            endpoint=self._endpoint,
+                            request_hash=self._request_hash,
+                            usage=usage,
+                        )
+                        if self._on_call_recorded is not None:
+                            await self._on_call_recorded(event)
         finally:
             await client.aclose()
-
-    return StreamingResponse(stream_gen(), media_type="text/event-stream")
 
 
 async def _handle_non_streaming(

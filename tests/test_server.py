@@ -216,9 +216,41 @@ def test_daily_endpoint_custom_days(client: TestClient) -> None:
     assert body["days"] == 7
 
 
+def test_daily_endpoint_invalid_days_defaults_to_30(client: TestClient) -> None:
+    """GET /api/usage/daily?days=999 should default to 30."""
+    response = client.get("/api/usage/daily?days=999")
+    assert response.status_code == 200
+    assert response.json()["days"] == 30
+
+
 # ---------------------------------------------------------------------------
 # /api/usage/sources
 # ---------------------------------------------------------------------------
+
+
+def test_sources_endpoint_includes_todays_live_calls(
+    client: TestClient, test_store: UsageStore
+) -> None:
+    """GET /api/usage/sources must include today's raw calls before nightly rollup."""
+    import time
+    test_store.insert_call(
+        ts=int(time.time()),
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        source="live-source",
+        source_tag=None,
+        input_tokens=100,
+        output_tokens=50,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        cost_usd=0.01,
+        endpoint="/v1/messages",
+        request_hash="live-hash-001",
+    )
+    response = client.get("/api/usage/sources")
+    assert response.status_code == 200
+    source_names = [s["source"] for s in response.json()["sources"]]
+    assert "live-source" in source_names
 
 
 def test_sources_endpoint_empty_store(client: TestClient) -> None:

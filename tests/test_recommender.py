@@ -130,6 +130,29 @@ def test_only_checks_last_30_days(store):
     assert not any(r.type == "low_cache_hit_rate" for r in recs)
 
 
+def test_recommendations_include_todays_live_calls(store):
+    """generate_recommendations must include today's raw calls before nightly rollup."""
+    import time
+    # Insert 150 raw calls today (no rollup, so nothing in daily_agg yet)
+    for i in range(150):
+        store.insert_call(
+            ts=int(time.time()),
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            source="live-app",
+            source_tag=None,
+            input_tokens=100,
+            output_tokens=50,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            cost_usd=0.001,
+            endpoint="/v1/messages",
+            request_hash=f"sha256:live-{i}",
+        )
+    recs = generate_recommendations(store)
+    assert any(r.type == "low_cache_hit_rate" for r in recs)
+
+
 def test_includes_data_from_exactly_30_days_ago(store):
     _insert_daily(store, date_str=today_minus(30), provider="anthropic",
                   model="claude-sonnet-4-6", source="boundary-app",

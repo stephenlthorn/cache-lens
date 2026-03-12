@@ -1,5 +1,5 @@
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from cachelens.store import UsageStore
@@ -192,3 +192,39 @@ def test_db_size_bytes(store):
 def test_db_size_bytes_fresh_store_is_positive(tmp_path):
     s = UsageStore(db_path=tmp_path / "fresh.db")
     assert s.db_size_bytes() > 0
+
+
+# ---------------------------------------------------------------------------
+# kpi_rolling — historical daily_agg + today's live calls
+# ---------------------------------------------------------------------------
+
+
+def test_kpi_rolling_includes_yesterday_daily_agg(store):
+    """kpi_rolling must count data from daily_agg, not just raw calls."""
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    store.upsert_daily_agg(
+        date=yesterday, provider="anthropic", model="claude-sonnet-4-6",
+        source="app", call_count=10, input_tokens=1000, output_tokens=500,
+        cache_read_tokens=0, cache_write_tokens=0, cost_usd=0.10,
+    )
+    kpi = store.kpi_rolling(days=7)
+    assert kpi["call_count"] == 10
+    assert kpi["input_tokens"] == 1000
+    assert kpi["total_cost_usd"] == pytest.approx(0.10)
+
+
+def test_kpi_rolling_combines_daily_agg_and_live_calls(store):
+    """kpi_rolling must combine yesterday's daily_agg with today's raw calls."""
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    store.upsert_daily_agg(
+        date=yesterday, provider="anthropic", model="claude-sonnet-4-6",
+        source="app", call_count=5, input_tokens=500, output_tokens=250,
+        cache_read_tokens=0, cache_write_tokens=0, cost_usd=0.05,
+    )
+    # Today's raw call
+    _insert_call(store, input_tokens=200, output_tokens=100, cost_usd=0.02,
+                 request_hash="sha256:live1")
+    kpi = store.kpi_rolling(days=7)
+    assert kpi["call_count"] == 6
+    assert kpi["input_tokens"] == 700
+    assert kpi["total_cost_usd"] == pytest.approx(0.07)

@@ -355,6 +355,142 @@ def test_record_call_uses_upstream_path_as_endpoint():
     assert not call_kwargs["endpoint"].startswith("http")
 
 
+# ---------------------------------------------------------------------------
+# _UpstreamStreamResponse — upstream status and header forwarding
+# ---------------------------------------------------------------------------
+
+
+async def _run_asgi(response, scope=None):
+    """Invoke an ASGI callable and return list of sent messages."""
+    sent = []
+
+    async def receive():
+        return {}
+
+    async def send(message):
+        sent.append(message)
+
+    await response(scope or {"type": "http"}, receive, send)
+    return sent
+
+
+class _FakeStreamCM:
+    """Async context manager wrapping a fake upstream httpx streaming response."""
+
+    def __init__(self, *, status_code=200, headers=None, chunks=()):
+        self._status_code = status_code
+        self._headers = headers or {}
+        self._chunks = list(chunks)
+
+    async def __aenter__(self):
+        self.status_code = self._status_code
+        self.headers = self._headers
+        self.is_success = 200 <= self._status_code < 300
+
+        async def aiter_bytes():
+            for c in self._chunks:
+                yield c
+
+        self.aiter_bytes = aiter_bytes
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
+class _FakeClient:
+    def __init__(self, stream_cm):
+        self._stream_cm = stream_cm
+
+    def stream(self, method, url, **kwargs):
+        return self._stream_cm
+
+    async def aclose(self):
+        pass
+
+
+def test_upstream_stream_response_forwards_upstream_429_status():
+    """_UpstreamStreamResponse must forward upstream HTTP 429 status to client."""
+    import asyncio
+    from cachelens.proxy import _UpstreamStreamResponse
+    from cachelens.detector import ParsedProxy
+    from unittest.mock import MagicMock
+
+    parsed = ParsedProxy(
+        provider="anthropic",
+        source_tag=None,
+        source="claude-code",
+        upstream_path="/v1/messages",
+    )
+    stream_cm = _FakeStreamCM(
+        status_code=429,
+        headers={"x-ratelimit-remaining": "0"},
+        chunks=[b"rate limited"],
+    )
+    fake_client = _FakeClient(stream_cm)
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr("cachelens.proxy.httpx.AsyncClient", lambda **kw: fake_client)
+        asgi_resp = _UpstreamStreamResponse(
+            method="POST",
+            url="https://api.anthropic.com/v1/messages",
+            headers={},
+            body=b"{}",
+            parsed=parsed,
+            request_hash="abc",
+            endpoint="/v1/messages",
+            store=MagicMock(),
+            pricing=MagicMock(),
+            on_call_recorded=None,
+        )
+        sent = asyncio.run(_run_asgi(asgi_resp))
+
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    assert start["status"] == 429
+
+
+def test_upstream_stream_response_forwards_upstream_headers():
+    """_UpstreamStreamResponse must forward upstream headers to client."""
+    import asyncio
+    from cachelens.proxy import _UpstreamStreamResponse
+    from cachelens.detector import ParsedProxy
+    from unittest.mock import MagicMock
+
+    parsed = ParsedProxy(
+        provider="openai",
+        source_tag=None,
+        source="myapp",
+        upstream_path="/v1/chat/completions",
+    )
+    stream_cm = _FakeStreamCM(
+        status_code=200,
+        headers={"content-type": "text/event-stream", "x-request-id": "req-123"},
+        chunks=[b"data: {}\n\n"],
+    )
+    fake_client = _FakeClient(stream_cm)
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr("cachelens.proxy.httpx.AsyncClient", lambda **kw: fake_client)
+        asgi_resp = _UpstreamStreamResponse(
+            method="POST",
+            url="https://api.openai.com/v1/chat/completions",
+            headers={},
+            body=b"{}",
+            parsed=parsed,
+            request_hash="def",
+            endpoint="/v1/chat/completions",
+            store=MagicMock(),
+            pricing=MagicMock(),
+            on_call_recorded=None,
+        )
+        sent = asyncio.run(_run_asgi(asgi_resp))
+
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    header_dict = {k.decode(): v.decode() for k, v in start["headers"]}
+    assert "x-request-id" in header_dict
+    assert header_dict["x-request-id"] == "req-123"
+
+
 def test_record_call_does_not_store_full_url_as_endpoint():
     from cachelens.detector import ParsedProxy
 
