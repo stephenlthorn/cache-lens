@@ -352,6 +352,9 @@ async def handle_proxy_request(
     forward_headers = _filter_headers(headers)
     request_hash = sha256_request(body)
     endpoint = parsed.upstream_path
+    user_agent = next(
+        (v for k, v in headers.items() if k.lower() == "user-agent"), ""
+    )
 
     # Determine streaming: Google uses path (streamGenerateContent), others use body
     if parsed.provider == "google":
@@ -371,6 +374,7 @@ async def handle_proxy_request(
             store=store,
             pricing=pricing,
             on_call_recorded=on_call_recorded,
+            user_agent=user_agent,
         )
     else:
         async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
@@ -386,6 +390,7 @@ async def handle_proxy_request(
                 store=store,
                 pricing=pricing,
                 on_call_recorded=on_call_recorded,
+                user_agent=user_agent,
             )
 
 
@@ -411,6 +416,7 @@ class _UpstreamStreamResponse(Response):
         store: UsageStore,
         pricing: PricingTable,
         on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
+        user_agent: str = "",
     ) -> None:
         super().__init__()
         self._method = method
@@ -423,6 +429,7 @@ class _UpstreamStreamResponse(Response):
         self._store = store
         self._pricing = pricing
         self._on_call_recorded = on_call_recorded
+        self._user_agent = user_agent
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         client = httpx.AsyncClient(timeout=300.0, follow_redirects=True)
@@ -469,6 +476,7 @@ class _UpstreamStreamResponse(Response):
                             endpoint=self._endpoint,
                             request_hash=self._request_hash,
                             usage=usage,
+                            user_agent=self._user_agent,
                         )
                         if self._on_call_recorded is not None:
                             await self._on_call_recorded(event)
@@ -489,6 +497,7 @@ async def _handle_non_streaming(
     store: UsageStore,
     pricing: PricingTable,
     on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
+    user_agent: str = "",
 ) -> Response:
     response = await client.request(method, url, headers=headers, content=body)
     response_body = response.content
@@ -504,6 +513,7 @@ async def _handle_non_streaming(
                 endpoint=endpoint,
                 request_hash=request_hash,
                 usage=usage,
+                user_agent=user_agent,
             )
             if on_call_recorded is not None:
                 await on_call_recorded(event)
@@ -527,6 +537,7 @@ def _record_call(
     endpoint: str,
     request_hash: str,
     usage: dict,
+    user_agent: str = "",
 ) -> dict:
     """Record call in store and return event dict for WebSocket broadcast."""
     model = usage.get("model") or "unknown"
@@ -558,6 +569,7 @@ def _record_call(
         cost_usd=cost,
         endpoint=endpoint,
         request_hash=request_hash,
+        user_agent=user_agent,
     )
 
     return {

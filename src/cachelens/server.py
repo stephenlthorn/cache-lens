@@ -195,6 +195,7 @@ def create_app(
                 "cache_write_tokens": row["cache_write_tokens"],
                 "cost_usd": row["cost_usd"],
                 "endpoint": row["endpoint"],
+                "user_agent": row["user_agent"] if row["user_agent"] else None,
             }
             for row in raw
         ]

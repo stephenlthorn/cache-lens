@@ -31,22 +31,56 @@ KNOWN_PROVIDERS: frozenset[str] = frozenset({"anthropic", "openai", "google"})
 # (order matters; more specific first). A secondary substring pass handles
 # compound UAs like "anthropic-typescript/X claude-code/Y" and space-separated
 # variants like "Claude Code/0.23.0".
-UA_PATTERNS: list[tuple[str, str]] = [
+# App-level patterns: matched as case-sensitive prefix OR case-insensitive
+# substring.  These always win over SDK library patterns below.
+# Order matters within each tier (more specific first).
+_APP_PATTERNS: list[tuple[str, str]] = [
     ("claude-code/", "claude-code"),
     ("Claude-Code/", "claude-code"),
     ("Claude Code/", "claude-code"),
-    ("anthropic-python/", "anthropic-python"),  # before python-httpx
+    ("claude-desktop/", "claude-desktop"),
+    ("Claude-Desktop/", "claude-desktop"),
+    ("Claude Desktop/", "claude-desktop"),
+    ("cursor/", "cursor"),
+    ("Cursor/", "cursor"),
+    ("windsurf/", "windsurf"),
+    ("Windsurf/", "windsurf"),
+    ("continue/", "continue"),
+    ("Continue/", "continue"),
+    ("aider/", "aider"),
+    ("Aider/", "aider"),
+    ("cline/", "cline"),
+    ("Cline/", "cline"),
+    ("zed/", "zed"),
+    ("Zed/", "zed"),
+]
+
+# SDK library patterns: matched as prefix, only when no app pattern fires.
+_SDK_PATTERNS: list[tuple[str, str]] = [
+    ("anthropic-python/", "anthropic-python"),
+    ("anthropic-typescript/", "anthropic-typescript"),
     ("openai-python/", "openai-python"),
+    ("openai-node/", "openai-node"),
     ("python-httpx/", "python-httpx"),
     ("python-requests/", "python-requests"),
     ("node-fetch/", "node-fetch"),
     ("axios/", "axios"),
 ]
 
-# Tokens searched case-insensitively anywhere in the UA string, used as
-# fallback when no prefix matches. Order determines priority.
+# Keep UA_PATTERNS as the union for any code that still references it.
+UA_PATTERNS: list[tuple[str, str]] = _APP_PATTERNS + _SDK_PATTERNS
+
+# Case-insensitive substring tokens for compound UAs like
+# "anthropic-typescript/X claude-code/Y".  Checked after app prefix patterns
+# but before SDK prefix patterns.
 _UA_SUBSTRING_TOKENS: list[tuple[str, str]] = [
     ("claude-code", "claude-code"),
+    ("claude-desktop", "claude-desktop"),
+    ("cursor", "cursor"),
+    ("windsurf", "windsurf"),
+    ("continue-dev", "continue"),
+    ("aider", "aider"),
+    ("cline", "cline"),
 ]
 
 
@@ -70,19 +104,26 @@ def sanitize_tag(raw: str) -> str | None:
 def detect_source_from_ua(user_agent: str | None) -> str | None:
     """Return canonical source name from User-Agent header, or None if no match.
 
-    Detection order:
-    1. Prefix match (case-sensitive) against UA_PATTERNS.
-    2. Case-insensitive substring match against _UA_SUBSTRING_TOKENS, which
+    Detection order (highest → lowest priority):
+    1. App prefix match (case-sensitive) against _APP_PATTERNS.
+    2. Case-insensitive substring match against _UA_SUBSTRING_TOKENS —
        handles compound UAs like "anthropic-typescript/X claude-code/Y".
+    3. SDK prefix match (case-sensitive) against _SDK_PATTERNS.
     """
     if not user_agent:
         return None
-    for prefix, canonical in UA_PATTERNS:
+    # Tier 1: app-level prefix match
+    for prefix, canonical in _APP_PATTERNS:
         if user_agent.startswith(prefix):
             return canonical
+    # Tier 2: substring fallback — catches compound/space-separated UAs
     ua_lower = user_agent.lower()
     for token, canonical in _UA_SUBSTRING_TOKENS:
         if token in ua_lower:
+            return canonical
+    # Tier 3: SDK library prefix match
+    for prefix, canonical in _SDK_PATTERNS:
+        if user_agent.startswith(prefix):
             return canonical
     return None
 

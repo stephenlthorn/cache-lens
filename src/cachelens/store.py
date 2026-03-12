@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS calls (
     cache_write_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0.0,
     endpoint TEXT NOT NULL,
-    request_hash TEXT NOT NULL
+    request_hash TEXT NOT NULL,
+    user_agent TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS daily_agg (
     date TEXT NOT NULL,
@@ -69,21 +70,34 @@ class UsageStore:
         self._con = sqlite3.connect(str(self._path), check_same_thread=False)
         self._con.row_factory = sqlite3.Row
         self._con.executescript(_SCHEMA)
+        self._migrate()
         self._con.commit()
+
+    def _migrate(self) -> None:
+        """Non-destructive schema migrations for existing databases."""
+        cols = {
+            row[1]
+            for row in self._con.execute("PRAGMA table_info(calls)").fetchall()
+        }
+        if "user_agent" not in cols:
+            self._con.execute(
+                "ALTER TABLE calls ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''"
+            )
 
     def insert_call(self, *, ts: int, provider: str, model: str,
                     source: str, source_tag: str | None,
                     input_tokens: int, output_tokens: int,
                     cache_read_tokens: int, cache_write_tokens: int,
-                    cost_usd: float, endpoint: str, request_hash: str) -> None:
+                    cost_usd: float, endpoint: str, request_hash: str,
+                    user_agent: str = "") -> None:
         with self._lock:
             self._con.execute(
                 "INSERT INTO calls (ts,provider,model,source,source_tag,"
                 "input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,"
-                "cost_usd,endpoint,request_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "cost_usd,endpoint,request_hash,user_agent) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ts, provider, model, source, source_tag,
                  input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-                 cost_usd, endpoint, request_hash),
+                 cost_usd, endpoint, request_hash, user_agent),
             )
             self._con.commit()
 
