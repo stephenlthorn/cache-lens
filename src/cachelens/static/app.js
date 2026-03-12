@@ -466,6 +466,8 @@ function initDashboard() {
   loadSourceBreakdown();
   backfillLiveFeed();
   connectLiveFeed();
+  // Poll every 10s so calls appear even when the WebSocket is unavailable
+  setInterval(backfillLiveFeed, 10000);
 
   document.querySelectorAll('#chartToggle .tab').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -643,17 +645,43 @@ async function loadSourceBreakdown() {
 
 const LIVE_FEED_MAX_ROWS = 50;
 
+// Tracks the unix timestamp (seconds) of the most recent call displayed.
+// Used to deduplicate between the initial backfill, polling, and WebSocket events.
+let liveFeedLastTs = 0;
+
+function _callTs(call) {
+  // WS events use 'ts' (unix seconds); /recent responses use 'timestamp' (ISO string)
+  if (typeof call.ts === 'number') return call.ts;
+  if (call.timestamp) return Math.floor(new Date(call.timestamp).getTime() / 1000);
+  return 0;
+}
+
 async function backfillLiveFeed() {
+  const tbody = el('liveFeedBody');
   try {
-    const r = await fetch(apiUrl('/api/usage/recent?limit=50'));
-    if (!r.ok) return;
-    const { calls } = await r.json();
+    const url = apiUrl('/api/usage/recent?limit=50');
+    const r = await fetch(url);
+    if (!r.ok) {
+      // Only overwrite the table if nothing has been shown yet
+      if (tbody && liveFeedLastTs === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty">Backfill failed: HTTP ${r.status} (${url})</td></tr>`;
+      }
+      return;
+    }
+    const data = await r.json();
+    const calls = data.calls || [];
+    // Only add calls newer than the last one already shown (deduplication for polling)
+    const newCalls = calls.filter(c => _callTs(c) > liveFeedLastTs);
+    if (newCalls.length === 0) return;
     // calls are newest-first; addLiveFeedRow prepends, so add oldest-first
-    for (const call of [...calls].reverse()) {
+    for (const call of [...newCalls].reverse()) {
+      liveFeedLastTs = Math.max(liveFeedLastTs, _callTs(call));
       addLiveFeedRow(call);
     }
-  } catch {
-    // silently skip backfill if unavailable
+  } catch (err) {
+    if (tbody && liveFeedLastTs === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="table-empty">Backfill error: ${escapeHtml(String(err))}</td></tr>`;
+    }
   }
 }
 let liveFeedEmpty = true;
@@ -682,6 +710,8 @@ function connectLiveFeed() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        // Update tracker so polling won't re-add this WS-delivered call
+        liveFeedLastTs = Math.max(liveFeedLastTs, _callTs(data));
         addLiveFeedRow(data);
         reconnectDelay = 1000;
       } catch {
