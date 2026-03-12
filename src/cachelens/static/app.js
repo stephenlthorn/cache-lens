@@ -656,35 +656,56 @@ function _callTs(call) {
   return 0;
 }
 
+function _liveFeedDebug(msg) {
+  const d = el('liveFeedDebug');
+  if (!d) return;
+  d.style.display = 'block';
+  d.textContent = msg;
+}
+
 async function backfillLiveFeed() {
   const tbody = el('liveFeedBody');
-  const _diag = (msg) => {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="table-empty" style="font-family:monospace;text-align:left;padding:8px">DIAG: ${escapeHtml(msg)}</td></tr>`;
-  };
   try {
     const url = apiUrl('/api/usage/recent?limit=50');
-    _diag(`[1] Fetching ${url} …`);
+    _liveFeedDebug(`[1] fetching ${url}`);
     const r = await fetch(url);
-    _diag(`[2] HTTP ${r.status} from ${url}`);
+    _liveFeedDebug(`[2] HTTP ${r.status}`);
     if (!r.ok) {
+      if (tbody && liveFeedLastTs === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty">Backfill failed: HTTP ${r.status} (${url})</td></tr>`;
+      }
       return;
     }
     const data = await r.json();
     const calls = data.calls || [];
-    _diag(`[3] Got ${calls.length} calls. liveFeedLastTs=${liveFeedLastTs}. First ts=${calls[0] ? JSON.stringify({ts:calls[0].ts, timestamp:calls[0].timestamp, _callTs:_callTs(calls[0])}) : 'n/a'}`);
+    _liveFeedDebug(`[3] ${calls.length} calls, liveFeedLastTs=${liveFeedLastTs}, tbody=${tbody ? 'ok' : 'null'}`);
     if (calls.length === 0) {
-      _diag(`[4] No calls in DB yet.`);
+      if (tbody && liveFeedLastTs === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty">No API calls recorded yet. Route traffic through CacheLens to see activity here.</td></tr>`;
+      }
       return;
     }
     const newCalls = calls.filter(c => _callTs(c) > liveFeedLastTs);
-    _diag(`[4] ${newCalls.length} new calls (after filtering by liveFeedLastTs=${liveFeedLastTs})`);
-    if (newCalls.length === 0) return;
+    _liveFeedDebug(`[4] ${newCalls.length} new, first_callTs=${calls[0] ? _callTs(calls[0]) : 'n/a'}`);
+    if (newCalls.length === 0) {
+      if (tbody && liveFeedLastTs === 0) {
+        // All returned calls have ts=0 — show them anyway
+        for (const call of [...calls].reverse()) {
+          addLiveFeedRow(call);
+        }
+      }
+      return;
+    }
     for (const call of [...newCalls].reverse()) {
       liveFeedLastTs = Math.max(liveFeedLastTs, _callTs(call));
       addLiveFeedRow(call);
     }
+    _liveFeedDebug('');  // clear on success
   } catch (err) {
-    _diag(`ERROR: ${String(err)}`);
+    _liveFeedDebug(`ERROR: ${String(err)}`);
+    if (tbody && liveFeedLastTs === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="table-empty">Backfill error: ${escapeHtml(String(err))}</td></tr>`;
+    }
   }
 }
 let liveFeedEmpty = true;

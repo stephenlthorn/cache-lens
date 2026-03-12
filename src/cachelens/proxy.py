@@ -376,7 +376,7 @@ async def handle_proxy_request(
             )
 
 
-class _UpstreamStreamResponse:
+class _UpstreamStreamResponse(Response):
     """ASGI response that opens an upstream stream and forwards its status,
     headers, and body chunks to the downstream client.
 
@@ -399,6 +399,7 @@ class _UpstreamStreamResponse:
         pricing: PricingTable,
         on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
     ) -> None:
+        super().__init__()
         self._method = method
         self._url = url
         self._headers = headers
