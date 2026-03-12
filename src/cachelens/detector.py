@@ -27,18 +27,26 @@ VERSION_SEGMENT_RE = re.compile(r"^v\d")
 KNOWN_PROVIDERS: frozenset[str] = frozenset({"anthropic", "openai", "google"})
 
 # User-Agent pattern → canonical source name.
-# Patterns are matched as prefix; order matters (more specific first).
-# Matching is case-sensitive. Both common casings are listed explicitly
-# for SDKs that vary (e.g. claude-code vs Claude-Code).
+# Prefix patterns are matched case-sensitively at the start of the UA string
+# (order matters; more specific first). A secondary substring pass handles
+# compound UAs like "anthropic-typescript/X claude-code/Y" and space-separated
+# variants like "Claude Code/0.23.0".
 UA_PATTERNS: list[tuple[str, str]] = [
     ("claude-code/", "claude-code"),
     ("Claude-Code/", "claude-code"),
+    ("Claude Code/", "claude-code"),
     ("anthropic-python/", "anthropic-python"),  # before python-httpx
     ("openai-python/", "openai-python"),
     ("python-httpx/", "python-httpx"),
     ("python-requests/", "python-requests"),
     ("node-fetch/", "node-fetch"),
     ("axios/", "axios"),
+]
+
+# Tokens searched case-insensitively anywhere in the UA string, used as
+# fallback when no prefix matches. Order determines priority.
+_UA_SUBSTRING_TOKENS: list[tuple[str, str]] = [
+    ("claude-code", "claude-code"),
 ]
 
 
@@ -60,11 +68,21 @@ def sanitize_tag(raw: str) -> str | None:
 
 
 def detect_source_from_ua(user_agent: str | None) -> str | None:
-    """Return canonical source name from User-Agent header, or None if no match."""
+    """Return canonical source name from User-Agent header, or None if no match.
+
+    Detection order:
+    1. Prefix match (case-sensitive) against UA_PATTERNS.
+    2. Case-insensitive substring match against _UA_SUBSTRING_TOKENS, which
+       handles compound UAs like "anthropic-typescript/X claude-code/Y".
+    """
     if not user_agent:
         return None
     for prefix, canonical in UA_PATTERNS:
         if user_agent.startswith(prefix):
+            return canonical
+    ua_lower = user_agent.lower()
+    for token, canonical in _UA_SUBSTRING_TOKENS:
+        if token in ua_lower:
             return canonical
     return None
 

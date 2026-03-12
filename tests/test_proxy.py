@@ -285,6 +285,43 @@ def test_filter_response_headers_strips_hop_by_hop():
     assert result["x-custom-header"] == "value"
 
 
+def test_filter_response_headers_strips_content_encoding():
+    """content-encoding must be stripped because httpx decompresses automatically."""
+    headers = {
+        "content-type": "application/json",
+        "content-encoding": "gzip",
+        "content-length": "1234",
+        "x-request-id": "abc",
+    }
+    result = _filter_response_headers(headers)
+    assert "content-encoding" not in result
+    assert "content-length" not in result
+    assert result["content-type"] == "application/json"
+    assert result["x-request-id"] == "abc"
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "deflate", "br", "zstd"])
+def test_filter_response_headers_strips_all_encoding_types(encoding: str):
+    """Every content-encoding variant must be stripped to prevent double-decompression."""
+    headers = {"content-type": "application/json", "content-encoding": encoding}
+    result = _filter_response_headers(headers)
+    assert "content-encoding" not in result
+
+
+@pytest.mark.parametrize("header_name", [
+    "Content-Encoding",
+    "CONTENT-ENCODING",
+    "content-encoding",
+    "Content-encoding",
+])
+def test_filter_response_headers_strips_content_encoding_any_case(header_name: str):
+    """content-encoding stripping must be case-insensitive (real servers vary)."""
+    headers = {"content-type": "application/json", header_name: "gzip"}
+    result = _filter_response_headers(headers)
+    assert header_name not in result
+    assert result["content-type"] == "application/json"
+
+
 def test_filter_response_headers_preserves_non_hop_by_hop():
     headers = {
         "content-type": "text/event-stream",
@@ -489,6 +526,60 @@ def test_upstream_stream_response_forwards_upstream_headers():
     header_dict = {k.decode(): v.decode() for k, v in start["headers"]}
     assert "x-request-id" in header_dict
     assert header_dict["x-request-id"] == "req-123"
+
+
+def test_upstream_stream_response_strips_content_encoding():
+    """Regression: streaming responses must NOT forward content-encoding.
+
+    httpx decompresses gzip/deflate/br automatically via aiter_bytes().
+    Forwarding the original content-encoding header causes downstream clients
+    (e.g. Claude Code) to attempt double-decompression → zlib error.
+    """
+    import asyncio
+    from cachelens.proxy import _UpstreamStreamResponse
+    from cachelens.detector import ParsedProxy
+
+    parsed = ParsedProxy(
+        provider="anthropic",
+        source_tag=None,
+        source="claude-code",
+        upstream_path="/v1/messages",
+    )
+    stream_cm = _FakeStreamCM(
+        status_code=200,
+        headers={
+            "content-type": "text/event-stream",
+            "content-encoding": "gzip",
+            "content-length": "999",
+            "x-request-id": "req-gzip",
+        },
+        chunks=[b"data: {}\n\n"],
+    )
+    fake_client = _FakeClient(stream_cm)
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr("cachelens.proxy.httpx.AsyncClient", lambda **kw: fake_client)
+        asgi_resp = _UpstreamStreamResponse(
+            method="POST",
+            url="https://api.anthropic.com/v1/messages",
+            headers={},
+            body=b"{}",
+            parsed=parsed,
+            request_hash="gzip-regression",
+            endpoint="/v1/messages",
+            store=MagicMock(),
+            pricing=MagicMock(),
+            on_call_recorded=None,
+        )
+        sent = asyncio.run(_run_asgi(asgi_resp))
+
+    start = next(m for m in sent if m["type"] == "http.response.start")
+    header_dict = {k.decode(): v.decode() for k, v in start["headers"]}
+    assert "content-encoding" not in header_dict, (
+        "content-encoding must be stripped to prevent zlib double-decompression"
+    )
+    assert "content-length" not in header_dict
+    assert header_dict["x-request-id"] == "req-gzip"
 
 
 def test_record_call_does_not_store_full_url_as_endpoint():

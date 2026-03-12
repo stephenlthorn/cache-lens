@@ -340,3 +340,59 @@ def test_proxy_route_registered_for_google(
             headers={"x-goog-api-key": "test-key"},
         )
         assert r.status_code != 404
+
+
+# ---------------------------------------------------------------------------
+# Regression: proxy must strip content-encoding (zlib double-decompression)
+# ---------------------------------------------------------------------------
+
+
+def test_proxy_non_streaming_strips_content_encoding(
+    store: UsageStore, pricing: PricingTable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Non-streaming proxy response must NOT contain content-encoding.
+
+    httpx decompresses gzip/deflate/br automatically.  If the proxy forwards
+    the original content-encoding header, the downstream client attempts
+    double-decompression and crashes with a zlib error.
+    """
+    body = b'{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50}}'
+
+    class _FakeResponse:
+        status_code = 200
+        content = body
+        headers = {
+            "content-type": "application/json",
+            "content-encoding": "gzip",
+            "content-length": "999",
+            "x-request-id": "zlib-regression",
+        }
+        is_success = True
+
+    class _FakeAsyncClient:
+        def __init__(self, *a: object, **kw: object) -> None:
+            pass
+
+        async def __aenter__(self) -> "_FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            pass
+
+        async def request(self, *a: object, **kw: object) -> _FakeResponse:
+            return _FakeResponse()
+
+    monkeypatch.setattr("cachelens.proxy.httpx.AsyncClient", _FakeAsyncClient)
+
+    app = create_app(store=store, pricing=pricing)
+    with TestClient(app) as tc:
+        r = tc.post(
+            "/proxy/anthropic/v1/messages",
+            json={"model": "claude-sonnet-4-6", "messages": []},
+            headers={"x-api-key": "test-key"},
+        )
+        assert r.status_code == 200
+        assert "content-encoding" not in r.headers, (
+            "content-encoding must be stripped to prevent zlib double-decompression"
+        )
+        assert r.json()["model"] == "claude-sonnet-4-6"

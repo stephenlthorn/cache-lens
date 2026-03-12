@@ -73,6 +73,19 @@ def test_detect_ua_claude_code_titlecase() -> None:
     assert detect_source_from_ua("Claude-Code/2.0.0") == "claude-code"
 
 
+def test_detect_ua_claude_code_with_space() -> None:
+    assert detect_source_from_ua("Claude Code/0.23.0") == "claude-code"
+
+
+def test_detect_ua_claude_code_compound_sdk_first() -> None:
+    # Compound UA: SDK version first, then claude-code identifier
+    assert detect_source_from_ua("anthropic-typescript/0.51.0 claude-code/0.23.0") == "claude-code"
+
+
+def test_detect_ua_claude_code_compound_case_insensitive() -> None:
+    assert detect_source_from_ua("SomeLib/1.0 Claude-Code/0.23.0") == "claude-code"
+
+
 def test_detect_ua_python_httpx() -> None:
     assert detect_source_from_ua("python-httpx/0.27.0") == "python-httpx"
 

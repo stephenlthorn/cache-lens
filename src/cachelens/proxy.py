@@ -292,12 +292,25 @@ def _filter_headers(headers: dict[str, str]) -> dict[str, str]:
     }
 
 
+_STRIP_RESPONSE: frozenset[str] = _HOP_BY_HOP | frozenset({
+    "content-encoding",
+    "content-length",
+})
+
+
 def _filter_response_headers(headers: dict[str, str]) -> dict[str, str]:
-    """Remove hop-by-hop headers from upstream response before forwarding to client."""
+    """Remove hop-by-hop and encoding headers from upstream response.
+
+    httpx automatically decompresses gzip/deflate/br responses, so the body
+    we forward is already decompressed.  Keeping the original
+    ``content-encoding`` header causes downstream clients (e.g. Claude) to
+    attempt a second decompression → zlib error.  ``content-length`` is also
+    stripped because the decompressed size differs from the original.
+    """
     return {
         k: v
         for k, v in headers.items()
-        if k.lower() not in _HOP_BY_HOP
+        if k.lower() not in _STRIP_RESPONSE
     }
 
 
