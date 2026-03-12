@@ -13,14 +13,17 @@ from ..models import AnalysisInput, AnalysisResult, InputSummary
 def analyze(inp: AnalysisInput, min_tokens: int = 50) -> AnalysisResult:
     counter = TokenCounter()
 
-    # token counting per message
+    # token counting per message (create new Message objects to avoid mutation)
     total_tokens = 0
     total_messages = 0
     for call in inp.calls:
+        new_messages = []
         for msg in call.messages:
-            msg.token_count = counter.count(msg.content)
-            total_tokens += msg.token_count
+            token_count = counter.count(msg.content)
+            new_messages.append(msg.model_copy(update={"token_count": token_count}))
+            total_tokens += token_count
             total_messages += 1
+        call.messages = new_messages
 
     summary = InputSummary(total_calls=len(inp.calls), total_messages=total_messages, total_input_tokens=total_tokens)
 

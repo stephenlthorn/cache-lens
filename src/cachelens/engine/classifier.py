@@ -12,8 +12,23 @@ TEMPLATE_PATTERNS = [
     r"\{\{[^}]+\}\}",  # {{var}}
     r"\{[a-zA-Z_][a-zA-Z0-9_]*\}",  # {var}
     r"\$[a-zA-Z_][a-zA-Z0-9_]*",  # $var
-    r"<[a-zA-Z_][a-zA-Z0-9_]*>",  # <var>
 ]
+
+# XML-style tags commonly used as static delimiters in prompts (not template vars)
+_STATIC_XML_TAGS = {
+    "instructions", "context", "output", "input", "system", "user",
+    "assistant", "example", "examples", "response", "query", "document",
+    "documents", "tools", "tool", "function", "functions", "rules",
+    "constraints", "prompt", "task", "format", "schema", "thinking",
+}
+
+
+def _has_template_angle_brackets(text: str) -> bool:
+    """Check for <var>-style template variables, excluding common XML delimiter tags."""
+    for m in re.finditer(r"<([a-zA-Z_][a-zA-Z0-9_]*)>", text):
+        if m.group(1).lower() not in _STATIC_XML_TAGS:
+            return True
+    return False
 
 DYNAMIC_PATTERNS = [
     r"\d{4}-\d{2}-\d{2}",  # ISO dates
@@ -81,7 +96,7 @@ def _common_suffix(strings: list[str]) -> str:
 def _classify_by_heuristics(content: str, counter: TokenCounter) -> tuple[str, float]:
     """Classify a single block using heuristics."""
     # Check for template variables (high confidence dynamic)
-    if _find_patterns(content, TEMPLATE_PATTERNS):
+    if _find_patterns(content, TEMPLATE_PATTERNS) or _has_template_angle_brackets(content):
         return "dynamic", 0.95
 
     # Check for timestamps, UUIDs, URLs with params (dynamic)
@@ -141,15 +156,13 @@ def _classify_multi_call(inp: AnalysisInput, counter: TokenCounter) -> list[dict
                 "role": role,
             })
         elif len(unique_contents) == len(contents):
-            # All different -> dynamic
-            classification = "dynamic"
-            confidence = 1.0
-            content_preview = contents[0][:100]
+            # All different -> dynamic; use average token count
+            avg_tokens = sum(counter.count(c) for c in contents) // len(contents)
             sections.append({
-                "classification": classification,
-                "confidence": confidence,
-                "token_count": counter.count(contents[0]),
-                "content_preview": content_preview,
+                "classification": "dynamic",
+                "confidence": 1.0,
+                "token_count": avg_tokens,
+                "content_preview": contents[0][:100],
                 "position": f"message_{msg_idx}",
                 "role": role,
             })
@@ -168,11 +181,12 @@ def _classify_multi_call(inp: AnalysisInput, counter: TokenCounter) -> list[dict
                     "role": role,
                 })
 
-            # Middle portion varies
+            # Middle portion varies — clamp to 0 to avoid negatives
+            middle_tokens = max(0, counter.count(contents[0]) - counter.count(prefix) - counter.count(suffix))
             sections.append({
                 "classification": "dynamic",
                 "confidence": 0.9,
-                "token_count": counter.count(contents[0]) - counter.count(prefix) - counter.count(suffix),
+                "token_count": middle_tokens,
                 "content_preview": "[varies]",
                 "position": f"message_{msg_idx}_varies",
                 "role": role,

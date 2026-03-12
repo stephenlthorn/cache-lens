@@ -1,22 +1,7 @@
 from __future__ import annotations
 
 from ..models import AnalysisInput, RepeatedBlock, StaticDynamicBreakdown
-
-
-def _stype(section: dict) -> str | None:
-    """Return section type ('static'|'dynamic') supporting multiple schemas."""
-    return section.get("type") or section.get("classification")
-
-
-def _stokens(section: dict) -> int:
-    """Return token count supporting multiple schemas."""
-    v = section.get("tokens")
-    if isinstance(v, int):
-        return v
-    v = section.get("token_count")
-    if isinstance(v, int):
-        return v
-    return 0
+from .helpers import stype as _stype, stokens as _stokens
 
 
 def _detect_static_dynamic(inp: AnalysisInput, repeated_blocks: list[RepeatedBlock]) -> StaticDynamicBreakdown:

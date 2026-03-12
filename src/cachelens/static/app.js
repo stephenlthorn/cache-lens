@@ -332,7 +332,7 @@ async function analyzeNow() {
     const resp = await fetch(apiUrl('/api/analyze'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input: input.value })
+      body: JSON.stringify({ input: input.value, min_tokens: 50 })
     });
     if (!resp.ok) {
       const txt = await resp.text();

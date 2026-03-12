@@ -1,20 +1,7 @@
 from __future__ import annotations
 
 from ..models import AnalysisInput, RepeatedBlock, StaticDynamicBreakdown, Suggestion, WasteSummary
-
-
-def _stype(section: dict) -> str | None:
-    return section.get("type") or section.get("classification")
-
-
-def _stokens(section: dict) -> int:
-    v = section.get("tokens")
-    if isinstance(v, int):
-        return v
-    v = section.get("token_count")
-    if isinstance(v, int):
-        return v
-    return 0
+from .helpers import stype as _stype, stokens as _stokens
 
 
 def build_suggestions(
@@ -34,9 +21,10 @@ def build_suggestions(
         before = top.content_full[:200] + ("…" if len(top.content_full) > 200 else "")
         after = f"[CACHED SYSTEM PREFIX]\n{top.content_full[:140]}…\n\n[PER-CALL DYNAMIC CONTENT]"
 
-        denom = 1
-        if inp.calls and inp.calls[0].messages and inp.calls[0].messages[0].token_count:
-            denom = inp.calls[0].messages[0].token_count or 1
+        total_input = sum(
+            (m.token_count or 0) for call in inp.calls for m in call.messages
+        )
+        denom = max(1, total_input)
 
         out.append(
             Suggestion(

@@ -13,6 +13,7 @@ import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from .aggregator import schedule_rollups
 from .engine.analyzer import analyze
@@ -26,6 +27,11 @@ from .store import UsageStore
 DEFAULT_DB_PATH: Path = Path.home() / ".cachelens" / "usage.db"
 
 _WS_MAX_CONNECTIONS = 10
+
+
+class AnalyzeRequest(BaseModel):
+    input: str = Field(..., min_length=1, max_length=2_000_000)
+    min_tokens: int = Field(default=50, ge=1, le=10_000)
 
 
 @asynccontextmanager
@@ -95,10 +101,12 @@ def create_app(
         return html
 
     @app.post("/api/analyze")
-    def api_analyze(payload: dict) -> JSONResponse:
-        raw = payload.get("input", "")
+    def api_analyze(payload: AnalyzeRequest) -> JSONResponse:
+        raw = payload.input.strip()
+        if not raw:
+            return JSONResponse(status_code=400, content={"error": "Input is empty"})
         analysis_input = parse_input(raw)
-        result = analyze(analysis_input)
+        result = analyze(analysis_input, min_tokens=payload.min_tokens)
         return JSONResponse(content=json.loads(result.model_dump_json()))
 
     # ------------------------------------------------------------------

@@ -51,29 +51,23 @@ def build_optimized_structure(
             "section_type": "static",
         })
 
-    # Collect dynamic content (user messages that are not repeated)
-    dynamic_contents: list[tuple[str, str]] = []  # (role, content)
-    for call in inp.calls:
-        for msg in call.messages:
-            # Skip if this content is already in static
-            if any(msg.content == sc for sc in static_contents):
-                continue
-            dynamic_contents.append((msg.role, msg.content))
+    # Build a set of static content for fast lookup
+    static_set = set(static_contents)
 
-    # Add dynamic messages
-    seen_dynamic = set()
-    for role, content in dynamic_contents:
-        content_key = (role, content)
-        if content_key in seen_dynamic:
+    # Collect dynamic content from the first call only (representative per-call structure)
+    for msg in first_call.messages:
+        # Skip if entire message matches a static block
+        if msg.content in static_set:
             continue
-        seen_dynamic.add(content_key)
-        
-        # System messages are considered static by default
-        section_type = "static" if role == "system" else "dynamic"
-        
+        # Skip if message is fully composed of extracted static blocks
+        from .repeats import split_into_blocks
+        msg_blocks = split_into_blocks(msg.content)
+        if msg_blocks and all(b in static_set for b in msg_blocks):
+            continue
+        section_type = "static" if msg.role == "system" else "dynamic"
         optimized_messages.append({
-            "role": role,
-            "content": content,
+            "role": msg.role,
+            "content": msg.content,
             "section_type": section_type,
         })
 
@@ -90,5 +84,5 @@ def build_optimized_structure(
         messages=optimized_messages,
         estimated_tokens_per_call=estimated_tokens,
         original_tokens_per_call=original_tokens,
-        savings_per_call=max(0, savings),
+        savings_per_call=savings,
     )

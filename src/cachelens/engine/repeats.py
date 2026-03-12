@@ -15,11 +15,24 @@ def normalize(text: str) -> str:
 
 
 def split_into_blocks(content: str) -> list[str]:
-    # Start with paragraphs; fall back to sentences if there are no paragraphs.
+    # Try splitting on double-newlines first (paragraphs)
     paras = [p.strip() for p in content.split("\n\n") if p.strip()]
     if len(paras) >= 2:
         return paras
-    # crude sentence split
+
+    # Try markdown-style section headers
+    header_parts = re.split(r"(?m)^#{1,6}\s+", content)
+    header_parts = [p.strip() for p in header_parts if p.strip()]
+    if len(header_parts) >= 2:
+        return header_parts
+
+    # Try triple-dash / triple-equals separators
+    sep_parts = re.split(r"\n---+\n|\n===+\n", content)
+    sep_parts = [p.strip() for p in sep_parts if p.strip()]
+    if len(sep_parts) >= 2:
+        return sep_parts
+
+    # Fall back to sentence split
     sents = re.split(r"(?<=[.!?])\s+", content.strip())
     return [s.strip() for s in sents if s.strip()]
 

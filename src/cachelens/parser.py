@@ -19,7 +19,7 @@ def parse_input(raw: str) -> AnalysisInput:
     if isinstance(data, dict) and isinstance(data.get("messages"), list):
         return AnalysisInput.from_messages_payload(raw, data)
 
-    if isinstance(data, list) and all(isinstance(x, dict) and "role" in x and "content" in x for x in data):
+    if isinstance(data, list) and len(data) > 0 and all(isinstance(x, dict) and "role" in x and "content" in x for x in data):
         return AnalysisInput.from_messages_payload(raw, {"messages": data})
 
     # fallback: stringify json

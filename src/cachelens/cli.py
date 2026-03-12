@@ -36,7 +36,13 @@ def analyze_cmd(file: str, out_format: str, suggestions: bool, score_only: bool,
         p = Path(file)
         if not p.exists():
             raise click.ClickException(f"File not found: {file}")
-        raw = p.read_text(encoding="utf-8")
+        try:
+            raw = p.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            try:
+                raw = p.read_text(encoding="latin-1")
+            except Exception:
+                raise click.ClickException(f"Could not read file (unsupported encoding): {file}")
 
     if not raw.strip():
         raise click.ClickException("Input is empty")
