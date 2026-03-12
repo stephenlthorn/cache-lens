@@ -33,6 +33,8 @@ LAUNCHD_PLIST_TEMPLATE = """\
         <string>daemon</string>
         <string>--port</string>
         <string>{port}</string>
+        <string>--base-path</string>
+        <string>{base_path}</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -58,7 +60,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart={python_path} -m cachelens daemon --port {port}
+ExecStart={python_path} -m cachelens daemon --port {port} --base-path {base_path}
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -219,7 +221,7 @@ def remove_env_from_shell_file(shell_file: Path) -> None:
     shell_file.write_text(new_content)
 
 
-def _write_macos_plist(port: int) -> Path:
+def _write_macos_plist(port: int, base_path: str = "") -> Path:
     """Write LaunchAgent plist and return its path."""
     launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
     launch_agents_dir.mkdir(parents=True, exist_ok=True)
@@ -229,6 +231,7 @@ def _write_macos_plist(port: int) -> Path:
     plist_content = LAUNCHD_PLIST_TEMPLATE.format(
         python_path=sys.executable,
         port=port,
+        base_path=base_path,
         log_dir=str(log_dir),
         path=os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
     )
@@ -236,7 +239,7 @@ def _write_macos_plist(port: int) -> Path:
     return plist_path
 
 
-def _write_linux_service(port: int) -> Path:
+def _write_linux_service(port: int, base_path: str = "") -> Path:
     """Write systemd user service and return its path."""
     systemd_dir = Path.home() / ".config" / "systemd" / "user"
     systemd_dir.mkdir(parents=True, exist_ok=True)
@@ -244,12 +247,13 @@ def _write_linux_service(port: int) -> Path:
     service_content = SYSTEMD_SERVICE_TEMPLATE.format(
         python_path=sys.executable,
         port=port,
+        base_path=base_path,
     )
     service_path.write_text(service_content)
     return service_path
 
 
-def install(port: int = 8420) -> None:
+def install(port: int = 8420, base_path: str = "") -> None:
     """Run the full install sequence. Print each step."""
     platform = detect_platform()
 
@@ -264,10 +268,10 @@ def install(port: int = 8420) -> None:
 
     # 2. Write service file
     if platform == "macos":
-        service_path = _write_macos_plist(port)
+        service_path = _write_macos_plist(port, base_path=base_path)
         print(f"  Written LaunchAgent plist: {service_path}")
     else:
-        service_path = _write_linux_service(port)
+        service_path = _write_linux_service(port, base_path=base_path)
         print(f"  Written systemd service: {service_path}")
 
     # 3. Set env vars in shell config files

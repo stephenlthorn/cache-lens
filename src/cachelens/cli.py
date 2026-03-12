@@ -92,16 +92,18 @@ def analyze_cmd(file: str, out_format: str, suggestions: bool, score_only: bool,
 @main.command()
 @click.option("--port", type=int, default=8420, show_default=True)
 @click.option("--no-open", is_flag=True, help="Don't auto-open browser")
-def ui(port: int, no_open: bool) -> None:
+@click.option("--base-path", default="", help="URL base path (e.g. /cachelens)")
+def ui(port: int, no_open: bool, base_path: str) -> None:
     """Launch the local web UI."""
     from .server import run
 
-    run(port=port, open_browser=(not no_open))
+    run(port=port, open_browser=(not no_open), base_path=base_path)
 
 
 @main.command()
 @click.option("--port", type=int, default=8420, show_default=True, help="Port to listen on")
-def daemon(port: int) -> None:
+@click.option("--base-path", default="", help="URL base path when behind a reverse proxy (e.g. /cachelens)")
+def daemon(port: int, base_path: str) -> None:
     """Start the CacheLens daemon."""
     from .installer import is_port_in_use
 
@@ -113,7 +115,7 @@ def daemon(port: int) -> None:
         raise SystemExit(1)
     from .server import run
 
-    run(port=port, open_browser=False)
+    run(port=port, open_browser=False, base_path=base_path)
 
 
 @main.command()
@@ -149,11 +151,12 @@ def status(fmt: str, port: int) -> None:
 
 @main.command("install")
 @click.option("--port", type=int, default=8420, show_default=True, help="Port for the daemon")
-def install_cmd(port: int) -> None:
+@click.option("--base-path", default="", help="URL base path when behind a reverse proxy (e.g. /cachelens)")
+def install_cmd(port: int, base_path: str) -> None:
     """Install CacheLens as a background service."""
     from .installer import install as _install
 
-    _install(port=port)
+    _install(port=port, base_path=base_path)
 
 
 @main.command("uninstall")

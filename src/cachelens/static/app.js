@@ -1,5 +1,15 @@
 const el = (id) => document.getElementById(id);
 
+// ─── Base path helpers (Tailscale / reverse proxy support) ─────────────────
+// window.BASE_PATH is injected by the server (e.g. "/cachelens"). Empty string
+// when served directly at root.
+const BASE = (window.BASE_PATH || '').replace(/\/$/, '');
+const apiUrl  = (path) => BASE + path;
+const wsUrl   = (path) => {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${location.host}${BASE}${path}`;
+};
+
 // ─── Page navigation ───────────────────────────────────────────────────────
 
 const pageTabs = document.querySelectorAll('.page-tab');
@@ -322,7 +332,7 @@ async function analyzeNow() {
   clearError();
   setLoading(true);
   try {
-    const resp = await fetch('/api/analyze', {
+    const resp = await fetch(apiUrl('/api/analyze'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ input: input.value })
@@ -354,7 +364,7 @@ function exportJson() {
 }
 
 async function loadExample() {
-  const resp = await fetch('/static/example.json');
+  const resp = await fetch(apiUrl('/static/example.json'));
   input.value = await resp.text();
   updateInputMeta();
   analyzeBtn.disabled = input.value.trim().length === 0;
@@ -475,7 +485,7 @@ async function loadKPIs() {
   ];
   for (const p of periods) {
     try {
-      const r = await fetch(`/api/usage/kpi?days=${p.days}`);
+      const r = await fetch(apiUrl(`/api/usage/kpi?days=${p.days}`));
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       const kpiEl = el(`kpi-${p.days}`);
@@ -489,7 +499,7 @@ async function loadKPIs() {
 
 async function loadTokenChart(days) {
   try {
-    const r = await fetch(`/api/usage/daily?days=${days}`);
+    const r = await fetch(apiUrl(`/api/usage/daily?days=${days}`));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const rows = await r.json();
     renderTokenChart(rows);
@@ -564,7 +574,7 @@ async function loadProviderBreakdown() {
   const tbody = el('providerBody');
   if (!tbody) return;
   try {
-    const r = await fetch('/api/usage/daily?days=365');
+    const r = await fetch(apiUrl('/api/usage/daily?days=365'));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const rows = await r.json();
 
@@ -593,7 +603,7 @@ async function loadSourceBreakdown() {
   const tbody = el('sourceBody');
   if (!tbody) return;
   try {
-    const r = await fetch('/api/usage/daily?days=365');
+    const r = await fetch(apiUrl('/api/usage/daily?days=365'));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const rows = await r.json();
 
@@ -635,8 +645,7 @@ function connectLiveFeed() {
       ws.close();
     }
 
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${proto}//${location.host}/api/live`);
+    ws = new WebSocket(wsUrl('/api/live'));
 
     if (statusEl) statusEl.textContent = 'Connecting…';
 
@@ -720,7 +729,7 @@ async function loadDeepDive() {
 
   try {
     const params = new URLSearchParams({ days: 365 });
-    const r = await fetch(`/api/usage/daily?${params}`);
+    const r = await fetch(apiUrl(`/api/usage/daily?${params}`));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     let rows = await r.json();
 
@@ -862,7 +871,7 @@ async function loadRecommendations() {
   container.innerHTML = '<div class="table-empty">Loading…</div>';
 
   try {
-    const r = await fetch('/api/usage/recommendations');
+    const r = await fetch(apiUrl('/api/usage/recommendations'));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const recs = await r.json();
 

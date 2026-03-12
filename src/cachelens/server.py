@@ -83,8 +83,16 @@ def create_app(
     # ------------------------------------------------------------------
 
     @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return (static_dir / "index.html").read_text(encoding="utf-8")
+    def index(request: Request) -> str:
+        root_path = request.scope.get("root_path", "").rstrip("/")
+        html = (static_dir / "index.html").read_text(encoding="utf-8")
+        # Rewrite absolute static asset references to be prefix-aware
+        html = html.replace('href="/static/', f'href="{root_path}/static/')
+        html = html.replace('src="/static/', f'src="{root_path}/static/')
+        # Inject BASE_PATH so JS fetch/WebSocket calls can prefix correctly
+        injection = f'<script>window.BASE_PATH = {json.dumps(root_path)};</script>'
+        html = html.replace("</head>", f"  {injection}\n</head>")
+        return html
 
     @app.post("/api/analyze")
     def api_analyze(payload: dict) -> JSONResponse:
@@ -260,7 +268,7 @@ def create_app(
     return app
 
 
-def run(port: int = 8420, open_browser: bool = True) -> None:
+def run(port: int = 8420, open_browser: bool = True, base_path: str = "") -> None:
     app = create_app(port=port)
 
     if open_browser:
@@ -268,4 +276,4 @@ def run(port: int = 8420, open_browser: bool = True) -> None:
             webbrowser.open(f"http://127.0.0.1:{port}/")
         threading.Timer(0.5, _open).start()
 
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info", root_path=base_path)

@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from cachelens.proxy import (
+    _filter_response_headers,
+    _record_call,
     extract_usage_from_response,
     extract_usage_from_sse_chunks,
     is_streaming_request,
@@ -260,3 +263,128 @@ def test_extract_usage_from_sse_chunks_no_usage_returns_none():
 def test_extract_usage_from_sse_chunks_empty_returns_none():
     result = extract_usage_from_sse_chunks([], "anthropic")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _filter_response_headers — hop-by-hop stripping
+# ---------------------------------------------------------------------------
+
+def test_filter_response_headers_strips_hop_by_hop():
+    headers = {
+        "content-type": "application/json",
+        "transfer-encoding": "chunked",
+        "connection": "keep-alive",
+        "keep-alive": "timeout=5",
+        "x-custom-header": "value",
+    }
+    result = _filter_response_headers(headers)
+    assert "transfer-encoding" not in result
+    assert "connection" not in result
+    assert "keep-alive" not in result
+    assert result["content-type"] == "application/json"
+    assert result["x-custom-header"] == "value"
+
+
+def test_filter_response_headers_preserves_non_hop_by_hop():
+    headers = {
+        "content-type": "text/event-stream",
+        "x-request-id": "abc123",
+        "cache-control": "no-cache",
+    }
+    result = _filter_response_headers(headers)
+    assert result == {
+        "content-type": "text/event-stream",
+        "x-request-id": "abc123",
+        "cache-control": "no-cache",
+    }
+
+
+def test_filter_response_headers_case_insensitive():
+    headers = {
+        "Transfer-Encoding": "chunked",
+        "Connection": "close",
+        "Content-Type": "application/json",
+    }
+    result = _filter_response_headers(headers)
+    assert "Transfer-Encoding" not in result
+    assert "Connection" not in result
+    assert result["Content-Type"] == "application/json"
+
+
+def test_filter_response_headers_empty_dict():
+    assert _filter_response_headers({}) == {}
+
+
+# ---------------------------------------------------------------------------
+# _record_call — endpoint uses upstream_path not full URL
+# ---------------------------------------------------------------------------
+
+def test_record_call_uses_upstream_path_as_endpoint():
+    from cachelens.detector import ParsedProxy
+
+    store = MagicMock()
+    pricing = MagicMock()
+    pricing.cost_usd.return_value = 0.001
+
+    parsed = ParsedProxy(
+        provider="anthropic",
+        source_tag=None,
+        source="claude-code",
+        upstream_path="/v1/messages",
+    )
+    usage = {
+        "model": "claude-sonnet-4-6",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+    }
+
+    _record_call(
+        store=store,
+        pricing=pricing,
+        parsed=parsed,
+        endpoint="/v1/messages",
+        request_hash="abc123",
+        usage=usage,
+    )
+
+    call_kwargs = store.insert_call.call_args[1]
+    # endpoint must be the upstream path, not a full URL
+    assert call_kwargs["endpoint"] == "/v1/messages"
+    assert not call_kwargs["endpoint"].startswith("http")
+
+
+def test_record_call_does_not_store_full_url_as_endpoint():
+    from cachelens.detector import ParsedProxy
+
+    store = MagicMock()
+    pricing = MagicMock()
+    pricing.cost_usd.return_value = 0.0
+
+    parsed = ParsedProxy(
+        provider="openai",
+        source_tag="myapp",
+        source="myapp",
+        upstream_path="/v1/chat/completions",
+    )
+    usage = {
+        "model": "gpt-4o",
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+    }
+
+    _record_call(
+        store=store,
+        pricing=pricing,
+        parsed=parsed,
+        endpoint=parsed.upstream_path,
+        request_hash="def456",
+        usage=usage,
+    )
+
+    call_kwargs = store.insert_call.call_args[1]
+    assert "api.openai.com" not in call_kwargs["endpoint"]
+    assert call_kwargs["endpoint"] == "/v1/chat/completions"
