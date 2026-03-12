@@ -464,6 +464,7 @@ function initDashboard() {
   loadTokenChart(currentChartRange);
   loadProviderBreakdown();
   loadSourceBreakdown();
+  backfillLiveFeed();
   connectLiveFeed();
 
   document.querySelectorAll('#chartToggle .tab').forEach(btn => {
@@ -501,7 +502,7 @@ async function loadTokenChart(days) {
   try {
     const r = await fetch(apiUrl(`/api/usage/daily?days=${days}`));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const rows = await r.json();
+    const { rows } = await r.json();
     renderTokenChart(rows);
   } catch {
     // silently leave chart empty
@@ -512,10 +513,20 @@ function renderTokenChart(rows) {
   const canvas = el('tokenChart');
   if (!canvas) return;
 
-  const labels = rows.map(r => r.date || r.day || '');
-  const inputData = rows.map(r => r.input_tokens || 0);
-  const cacheData = rows.map(r => r.cache_read_tokens || 0);
-  const outputData = rows.map(r => r.output_tokens || 0);
+  // Aggregate by date (multiple provider/model/source rows per date)
+  const byDate = {};
+  for (const row of rows) {
+    const d = row.date;
+    if (!byDate[d]) byDate[d] = { input_tokens: 0, cache_read_tokens: 0, output_tokens: 0 };
+    byDate[d].input_tokens += row.input_tokens || 0;
+    byDate[d].cache_read_tokens += row.cache_read_tokens || 0;
+    byDate[d].output_tokens += row.output_tokens || 0;
+  }
+  const dates = Object.keys(byDate).sort();
+  const labels = dates;
+  const inputData = dates.map(d => byDate[d].input_tokens);
+  const cacheData = dates.map(d => byDate[d].cache_read_tokens);
+  const outputData = dates.map(d => byDate[d].output_tokens);
 
   if (tokenChart) {
     tokenChart.destroy();
@@ -576,14 +587,14 @@ async function loadProviderBreakdown() {
   try {
     const r = await fetch(apiUrl('/api/usage/daily?days=365'));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const rows = await r.json();
+    const { rows } = await r.json();
 
     const byProvider = {};
     for (const row of rows) {
       const prov = row.provider || 'unknown';
       if (!byProvider[prov]) byProvider[prov] = { calls: 0, cost: 0 };
-      byProvider[prov].calls += row.calls || 0;
-      byProvider[prov].cost += row.total_cost_usd || 0;
+      byProvider[prov].calls += row.call_count || 0;
+      byProvider[prov].cost += row.cost_usd || 0;
     }
 
     const sorted = Object.entries(byProvider).sort((a, b) => b[1].cost - a[1].cost);
@@ -605,14 +616,14 @@ async function loadSourceBreakdown() {
   try {
     const r = await fetch(apiUrl('/api/usage/daily?days=365'));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const rows = await r.json();
+    const { rows } = await r.json();
 
     const bySource = {};
     for (const row of rows) {
       const src = row.source || 'unknown';
       if (!bySource[src]) bySource[src] = { calls: 0, cost: 0 };
-      bySource[src].calls += row.calls || 0;
-      bySource[src].cost += row.total_cost_usd || 0;
+      bySource[src].calls += row.call_count || 0;
+      bySource[src].cost += row.cost_usd || 0;
     }
 
     const sorted = Object.entries(bySource).sort((a, b) => b[1].cost - a[1].cost);
@@ -631,6 +642,20 @@ async function loadSourceBreakdown() {
 // ─── Live Feed ──────────────────────────────────────────────────────────────
 
 const LIVE_FEED_MAX_ROWS = 50;
+
+async function backfillLiveFeed() {
+  try {
+    const r = await fetch(apiUrl('/api/usage/recent?limit=50'));
+    if (!r.ok) return;
+    const { calls } = await r.json();
+    // calls are newest-first; addLiveFeedRow prepends, so add oldest-first
+    for (const call of [...calls].reverse()) {
+      addLiveFeedRow(call);
+    }
+  } catch {
+    // silently skip backfill if unavailable
+  }
+}
 let liveFeedEmpty = true;
 
 function connectLiveFeed() {
@@ -731,7 +756,7 @@ async function loadDeepDive() {
     const params = new URLSearchParams({ days: 365 });
     const r = await fetch(apiUrl(`/api/usage/daily?${params}`));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    let rows = await r.json();
+    let { rows } = await r.json();
 
     // Client-side filtering
     rows = rows.filter(row => {
@@ -802,12 +827,12 @@ function renderDeepDiveTable() {
       <td>${escapeHtml(row.provider || '—')}</td>
       <td class="mono-sm">${escapeHtml(row.model || '—')}</td>
       <td>${escapeHtml(row.source || '—')}</td>
-      <td>${fmtInt(row.calls)}</td>
+      <td>${fmtInt(row.call_count)}</td>
       <td>${fmtInt(row.input_tokens)}</td>
       <td>${fmtInt(row.cache_read_tokens)}</td>
       <td>${row.cache_hit_pct != null ? row.cache_hit_pct.toFixed(1) + '%' : '—'}</td>
       <td>${fmtInt(row.output_tokens)}</td>
-      <td>${fmtCost(row.total_cost_usd)}</td>
+      <td>${fmtCost(row.cost_usd)}</td>
     </tr>
   `).join('');
 }

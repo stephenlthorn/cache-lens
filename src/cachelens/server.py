@@ -5,7 +5,7 @@ import os
 import threading
 import webbrowser
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -152,10 +152,51 @@ def create_app(
         s: UsageStore = request.app.state.store
         since = (date.today() - timedelta(days=days)).isoformat()
         rows = s.query_daily_agg_since(since)
+
+        # Supplement with today's live data (not yet in daily_agg until nightly rollup)
+        today = date.today().isoformat()
+        today_in_agg = {(r["provider"], r["model"], r["source"]) for r in rows if r["date"] == today}
+        for r in s.aggregate_calls_for_date(today):
+            if (r["provider"], r["model"], r["source"]) not in today_in_agg:
+                rows.append({
+                    "date": today,
+                    "provider": r["provider"],
+                    "model": r["model"],
+                    "source": r["source"],
+                    "call_count": r["call_count"],
+                    "input_tokens": r["input_tokens"],
+                    "output_tokens": r["output_tokens"],
+                    "cache_read_tokens": r["cache_read_tokens"],
+                    "cache_write_tokens": r["cache_write_tokens"],
+                    "cost_usd": r["cost_usd"],
+                })
+        rows.sort(key=lambda r: r["date"])
         return JSONResponse(content={
             "days": days,
             "rows": rows,
         })
+
+    @app.get("/api/usage/recent")
+    def api_recent(request: Request, limit: int = 50) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        raw = s.recent_calls(limit=min(limit, 200))
+        calls = [
+            {
+                "timestamp": datetime.fromtimestamp(row["ts"], tz=timezone.utc).isoformat(),
+                "provider": row["provider"],
+                "model": row["model"],
+                "source": row["source"],
+                "source_tag": row["source_tag"],
+                "input_tokens": row["input_tokens"],
+                "output_tokens": row["output_tokens"],
+                "cache_read_tokens": row["cache_read_tokens"],
+                "cache_write_tokens": row["cache_write_tokens"],
+                "cost_usd": row["cost_usd"],
+                "endpoint": row["endpoint"],
+            }
+            for row in raw
+        ]
+        return JSONResponse(content={"calls": calls})
 
     @app.get("/api/usage/sources")
     def api_sources(request: Request) -> JSONResponse:

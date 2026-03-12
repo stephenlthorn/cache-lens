@@ -215,6 +215,13 @@ class UsageStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def recent_calls(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return the most recent raw calls, newest first."""
+        rows = self._con.execute(
+            "SELECT * FROM calls ORDER BY ts DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def close(self) -> None:
         self._con.close()
 
