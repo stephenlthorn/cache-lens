@@ -670,6 +670,13 @@ async function backfillLiveFeed() {
     }
     const data = await r.json();
     const calls = data.calls || [];
+    if (calls.length === 0) {
+      // API has no calls yet — show a friendlier message than the default
+      if (tbody && liveFeedLastTs === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty">No API calls recorded yet. Route traffic through CacheLens to see activity here.</td></tr>`;
+      }
+      return;
+    }
     // Only add calls newer than the last one already shown (deduplication for polling)
     const newCalls = calls.filter(c => _callTs(c) > liveFeedLastTs);
     if (newCalls.length === 0) return;
