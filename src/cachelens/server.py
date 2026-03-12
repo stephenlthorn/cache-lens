@@ -136,10 +136,23 @@ def create_app(
         if days not in _VALID_DAYS:
             days = 30
         s: UsageStore = request.app.state.store
+        p: PricingTable = request.app.state.pricing
         row = s.kpi_rolling(days)
+
+        # Calculate savings from per-model data (rates vary by model)
+        since = (date.today() - timedelta(days=days)).isoformat()
+        today = date.today().isoformat()
+        savings = 0.0
+        for r in s.query_daily_agg_since(since):
+            if r["date"] != today:
+                savings += p.savings_usd(r["provider"], r["model"], r["cache_read_tokens"])
+        for r in s.aggregate_calls_for_date(today):
+            savings += p.savings_usd(r["provider"], r["model"], r["cache_read_tokens"])
+
         return JSONResponse(content={
             "days": days,
             "total_cost_usd": row["total_cost_usd"],
+            "savings_usd": savings,
             "call_count": row["call_count"],
             "input_tokens": row["input_tokens"],
             "output_tokens": row["output_tokens"],
@@ -152,6 +165,7 @@ def create_app(
         if days not in _VALID_DAYS:
             days = 30
         s: UsageStore = request.app.state.store
+        p: PricingTable = request.app.state.pricing
         since = (date.today() - timedelta(days=days)).isoformat()
         rows = s.query_daily_agg_since(since)
 
@@ -172,6 +186,11 @@ def create_app(
                     "cache_write_tokens": r["cache_write_tokens"],
                     "cost_usd": r["cost_usd"],
                 })
+
+        # Add per-row savings
+        for r in rows:
+            r["savings_usd"] = p.savings_usd(r["provider"], r["model"], r["cache_read_tokens"])
+
         rows.sort(key=lambda r: r["date"])
         return JSONResponse(content={
             "days": days,

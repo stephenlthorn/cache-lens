@@ -54,3 +54,35 @@ def test_malformed_override_skipped_daemon_does_not_fail(tmp_path, caplog):
         table = PricingTable(overrides_path=override)
     assert table._prices.get("bad") is None, "malformed model must not be loaded into prices"
     assert any("bad" in r.message for r in caplog.records), "warning must name the skipped model"
+
+
+def test_savings_usd_returns_difference_between_input_and_cache_read_rate():
+    table = PricingTable()
+    # claude-sonnet-4-6: input=$3/MTok, cache_read=$0.30/MTok
+    # 1M cache_read tokens → saved $3.00 - $0.30 = $2.70
+    savings = table.savings_usd(
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        cache_read_tokens=1_000_000,
+    )
+    assert savings == pytest.approx(2.70, rel=0.01)
+
+
+def test_savings_usd_zero_when_no_cache_reads():
+    table = PricingTable()
+    savings = table.savings_usd(
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        cache_read_tokens=0,
+    )
+    assert savings == 0.0
+
+
+def test_savings_usd_unknown_model_returns_zero():
+    table = PricingTable()
+    savings = table.savings_usd(
+        provider="anthropic",
+        model="unknown-model-99",
+        cache_read_tokens=1_000_000,
+    )
+    assert savings == 0.0

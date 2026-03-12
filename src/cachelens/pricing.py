@@ -64,3 +64,13 @@ class PricingTable:
             + cache_read_tokens  * r["cache_read"]  / 1_000_000
             + cache_write_tokens * r["cache_write"] / 1_000_000
         )
+
+    def savings_usd(
+        self,
+        provider: str,
+        model: str,
+        cache_read_tokens: int,
+    ) -> float:
+        """Return how much was saved by cache reads vs. full input pricing."""
+        r = self._row(provider, model)
+        return cache_read_tokens * (r["input"] - r["cache_read"]) / 1_000_000

@@ -288,6 +288,7 @@ h2,h3{margin:0; font-size:14px; letter-spacing:.3px; text-transform:uppercase; c
 }
 .kpi-label{ font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
 .kpi-value{ font-size: 26px; font-weight: 700; color: var(--text); }
+.kpi-savings{ font-size: 13px; color: #2ee9a6; margin-top: 2px; font-weight: 500; }
 
 /* ─── Chart ───────────────────────────────────────────────────────────── */
 .chart-wrap{ height: 260px; position: relative; }

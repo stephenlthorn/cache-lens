@@ -490,6 +490,10 @@ async function loadKPIs() {
       const data = await r.json();
       const kpiEl = el(`kpi-${p.days}`);
       if (kpiEl) kpiEl.textContent = fmtCost(data.total_cost_usd);
+      const savEl = el(`kpi-savings-${p.days}`);
+      if (savEl && typeof data.savings_usd === 'number' && data.savings_usd > 0) {
+        savEl.textContent = `saved ${fmtCost(data.savings_usd)}`;
+      }
     } catch {
       const kpiEl = el(`kpi-${p.days}`);
       if (kpiEl) kpiEl.textContent = '—';
