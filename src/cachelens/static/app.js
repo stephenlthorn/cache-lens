@@ -949,7 +949,7 @@ async function loadRecommendations() {
   try {
     const r = await fetch(apiUrl('/api/usage/recommendations'));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const recs = await r.json();
+    const recs = (await r.json()).recommendations || [];
 
     if (!recs || recs.length === 0) {
       container.innerHTML = '<div class="rec-empty">No recommendations — your usage looks optimal!</div>';
