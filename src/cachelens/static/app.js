@@ -658,37 +658,33 @@ function _callTs(call) {
 
 async function backfillLiveFeed() {
   const tbody = el('liveFeedBody');
+  const _diag = (msg) => {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="table-empty" style="font-family:monospace;text-align:left;padding:8px">DIAG: ${escapeHtml(msg)}</td></tr>`;
+  };
   try {
     const url = apiUrl('/api/usage/recent?limit=50');
+    _diag(`[1] Fetching ${url} …`);
     const r = await fetch(url);
+    _diag(`[2] HTTP ${r.status} from ${url}`);
     if (!r.ok) {
-      // Only overwrite the table if nothing has been shown yet
-      if (tbody && liveFeedLastTs === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-empty">Backfill failed: HTTP ${r.status} (${url})</td></tr>`;
-      }
       return;
     }
     const data = await r.json();
     const calls = data.calls || [];
+    _diag(`[3] Got ${calls.length} calls. liveFeedLastTs=${liveFeedLastTs}. First ts=${calls[0] ? JSON.stringify({ts:calls[0].ts, timestamp:calls[0].timestamp, _callTs:_callTs(calls[0])}) : 'n/a'}`);
     if (calls.length === 0) {
-      // API has no calls yet — show a friendlier message than the default
-      if (tbody && liveFeedLastTs === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-empty">No API calls recorded yet. Route traffic through CacheLens to see activity here.</td></tr>`;
-      }
+      _diag(`[4] No calls in DB yet.`);
       return;
     }
-    // Only add calls newer than the last one already shown (deduplication for polling)
     const newCalls = calls.filter(c => _callTs(c) > liveFeedLastTs);
+    _diag(`[4] ${newCalls.length} new calls (after filtering by liveFeedLastTs=${liveFeedLastTs})`);
     if (newCalls.length === 0) return;
-    // calls are newest-first; addLiveFeedRow prepends, so add oldest-first
     for (const call of [...newCalls].reverse()) {
       liveFeedLastTs = Math.max(liveFeedLastTs, _callTs(call));
       addLiveFeedRow(call);
     }
   } catch (err) {
-    if (tbody && liveFeedLastTs === 0) {
-      tbody.innerHTML = `<tr><td colspan="8" class="table-empty">Backfill error: ${escapeHtml(String(err))}</td></tr>`;
-    }
+    _diag(`ERROR: ${String(err)}`);
   }
 }
 let liveFeedEmpty = true;
