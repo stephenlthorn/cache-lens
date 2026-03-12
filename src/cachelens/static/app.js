@@ -31,9 +31,6 @@ pageTabs.forEach(tab => {
   tab.addEventListener('click', () => switchPage(tab.dataset.page));
 });
 
-// Start on dashboard
-switchPage('dashboard');
-
 // ─── Analyze page elements ─────────────────────────────────────────────────
 
 const input = el('input');
@@ -1008,3 +1005,6 @@ function applyDeepDiveFilters(filters) {
   if (filters.to) el('filterTo').value = filters.to;
   loadDeepDive();
 }
+
+// Start on dashboard — must be last so all let/const variables are initialized
+switchPage('dashboard');
