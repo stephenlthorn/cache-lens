@@ -615,3 +615,25 @@ def test_record_call_does_not_store_full_url_as_endpoint():
     call_kwargs = store.insert_call.call_args[1]
     assert "api.openai.com" not in call_kwargs["endpoint"]
     assert call_kwargs["endpoint"] == "/v1/chat/completions"
+
+
+def test_record_call_returns_event_with_id(tmp_path):
+    """_record_call must return event dict that includes 'id' field."""
+    from cachelens.store import UsageStore
+    from cachelens.pricing import PricingTable
+    from cachelens.proxy import _record_call
+    from cachelens.detector import ParsedProxy
+
+    store = UsageStore(tmp_path / "test.db")
+    pricing = PricingTable()
+    parsed = ParsedProxy(provider="anthropic", upstream_path="/v1/messages",
+                         source="test", source_tag=None)
+    event = _record_call(
+        store=store, pricing=pricing, parsed=parsed,
+        endpoint="/v1/messages", request_hash="abc",
+        usage={"model": "claude-sonnet-4-6", "input_tokens": 100,
+               "output_tokens": 50, "cache_read_tokens": 0, "cache_write_tokens": 0},
+    )
+    assert "id" in event
+    assert isinstance(event["id"], int)
+    assert event["id"] > 0

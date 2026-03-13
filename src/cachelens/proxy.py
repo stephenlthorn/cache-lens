@@ -388,9 +388,19 @@ async def handle_proxy_request(
         (v for k, v in headers.items() if k.lower() == "user-agent"), ""
     )
 
+    # Parse request body for analysis (shared across all v2 features)
+    parsed_body: dict | None = None
+    if method == "POST" and body:
+        try:
+            parsed_body = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+
     # Determine streaming: Google uses path (streamGenerateContent), others use body
     if parsed.provider == "google":
         streaming = "streamGenerateContent" in parsed.upstream_path
+    elif parsed_body is not None:
+        streaming = bool(parsed_body.get("stream") is True)
     else:
         streaming = is_streaming_request(body, parsed.provider)
 
@@ -423,6 +433,7 @@ async def handle_proxy_request(
             pricing=pricing,
             on_call_recorded=on_call_recorded,
             user_agent=user_agent,
+            parsed_body=parsed_body,
         )
     else:
         async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
@@ -440,6 +451,7 @@ async def handle_proxy_request(
                 on_call_recorded=on_call_recorded,
                 user_agent=user_agent,
                 dedup_enabled=dedup_enabled,
+                parsed_body=parsed_body,
             )
 
 
@@ -466,6 +478,13 @@ class _UpstreamStreamResponse(Response):
         pricing: PricingTable,
         on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
         user_agent: str = "",
+        parsed_body: dict | None = None,
+        _waste_items=None,
+        _max_tokens_requested=None,
+        _message_count=None,
+        _history_tokens=None,
+        _history_ratio=None,
+        _token_heatmap: str | None = None,
     ) -> None:
         super().__init__()
         self._method = method
@@ -479,6 +498,13 @@ class _UpstreamStreamResponse(Response):
         self._pricing = pricing
         self._on_call_recorded = on_call_recorded
         self._user_agent = user_agent
+        self._parsed_body = parsed_body
+        self._waste_items = _waste_items or []
+        self._max_tokens_requested = _max_tokens_requested
+        self._message_count = _message_count
+        self._history_tokens = _history_tokens
+        self._history_ratio = _history_ratio
+        self._token_heatmap = _token_heatmap
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         client = httpx.AsyncClient(timeout=300.0, follow_redirects=True)
@@ -548,6 +574,13 @@ async def _handle_non_streaming(
     on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
     user_agent: str = "",
     dedup_enabled: bool = False,
+    parsed_body: dict | None = None,
+    _waste_items=None,
+    _max_tokens_requested=None,
+    _message_count=None,
+    _history_tokens=None,
+    _history_ratio=None,
+    _token_heatmap: str | None = None,
 ) -> Response:
     t0 = time.time()
     response = await client.request(method, url, headers=headers, content=body)
@@ -638,7 +671,7 @@ def _record_call(
         cache_write_tokens=cache_write_tokens,
     )
 
-    store.insert_call(
+    call_id = store.insert_call(
         ts=ts,
         provider=parsed.provider,
         model=model,
@@ -657,6 +690,7 @@ def _record_call(
     )
 
     return {
+        "id": call_id,
         "ts": ts,
         "provider": parsed.provider,
         "model": model,
