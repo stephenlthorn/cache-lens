@@ -17,6 +17,7 @@ from fastapi.responses import Response
 from cachelens.detector import ParsedProxy, parse_proxy_path
 from cachelens.pricing import PricingTable
 from cachelens.store import UsageStore
+from cachelens.waste_detector import detect_waste
 
 # ---------------------------------------------------------------------------
 # Provider base URLs
@@ -396,6 +397,9 @@ async def handle_proxy_request(
         except (json.JSONDecodeError, UnicodeDecodeError):
             pass
 
+    # Run waste detection on parsed request body
+    _waste_items = detect_waste(parsed_body, parsed.provider) if parsed_body is not None else []
+
     # Determine streaming: Google uses path (streamGenerateContent), others use body
     if parsed.provider == "google":
         streaming = "streamGenerateContent" in parsed.upstream_path
@@ -434,6 +438,7 @@ async def handle_proxy_request(
             on_call_recorded=on_call_recorded,
             user_agent=user_agent,
             parsed_body=parsed_body,
+            _waste_items=_waste_items,
         )
     else:
         async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
@@ -452,6 +457,7 @@ async def handle_proxy_request(
                 user_agent=user_agent,
                 dedup_enabled=dedup_enabled,
                 parsed_body=parsed_body,
+                _waste_items=_waste_items,
             )
 
 
@@ -553,6 +559,14 @@ class _UpstreamStreamResponse(Response):
                             usage=usage,
                             user_agent=self._user_agent,
                         )
+                        if self._waste_items:
+                            self._store.insert_waste_items(
+                                call_id=event["id"],
+                                items=[{"waste_type": w.waste_type, "waste_tokens": w.waste_tokens,
+                                        "savings_usd": w.savings_usd, "detail": w.detail}
+                                       for w in self._waste_items],
+                            )
+                        event["waste_tokens"] = sum(w.waste_tokens for w in self._waste_items)
                         if self._on_call_recorded is not None:
                             await self._on_call_recorded(event)
         finally:
@@ -602,6 +616,14 @@ async def _handle_non_streaming(
                 latency_ms=latency_ms,
                 status_code=response.status_code,
             )
+            if _waste_items:
+                store.insert_waste_items(
+                    call_id=event["id"],
+                    items=[{"waste_type": w.waste_type, "waste_tokens": w.waste_tokens,
+                            "savings_usd": w.savings_usd, "detail": w.detail}
+                           for w in _waste_items],
+                )
+            event["waste_tokens"] = sum(w.waste_tokens for w in _waste_items)
             if on_call_recorded is not None:
                 await on_call_recorded(event)
 

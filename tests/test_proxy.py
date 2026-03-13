@@ -637,3 +637,54 @@ def test_record_call_returns_event_with_id(tmp_path):
     assert "id" in event
     assert isinstance(event["id"], int)
     assert event["id"] > 0
+
+
+def test_proxy_records_waste_items(tmp_path):
+    """Waste items from detect_waste are stored in call_waste table after a non-streaming call."""
+    import asyncio
+    from cachelens.store import UsageStore
+    from cachelens.pricing import PricingTable
+    from cachelens.proxy import handle_proxy_request
+
+    store = UsageStore(tmp_path / "test.db")
+    pricing = PricingTable()
+
+    request_body = {
+        "model": "claude-sonnet-4-6",
+        "messages": [
+            {"role": "system", "content": "Certainly! I'd be happy to help you."},
+            {"role": "user", "content": "Hello\n\n\n\n\nworld"},
+        ],
+        "max_tokens": 100,
+    }
+    body = json.dumps(request_body).encode()
+
+    fake_response_body = json.dumps({
+        "usage": {"input_tokens": 30, "output_tokens": 10, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+        "model": "claude-sonnet-4-6",
+    }).encode()
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        mock_response.status_code = 200
+        mock_response.content = fake_response_body
+        mock_response.headers = {"content-type": "application/json"}
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        asyncio.run(handle_proxy_request(
+            path="/proxy/anthropic/v1/messages",
+            method="POST",
+            headers={"content-type": "application/json", "x-api-key": "test"},
+            body=body,
+            store=store,
+            pricing=pricing,
+        ))
+
+    # Check waste items were stored
+    waste_rows = store._con.execute("SELECT * FROM call_waste").fetchall()
+    assert len(waste_rows) > 0
