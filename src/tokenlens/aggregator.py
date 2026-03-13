@@ -135,6 +135,35 @@ def run_startup_recovery(store: UsageStore, raw_days: int = 1, daily_days: int =
         _do_yearly_rollup(store, prior_year, daily_days)
 
 
+async def _weekly_digest_loop(store: UsageStore) -> None:
+    """Fires Sunday at 08:00 local time, dispatches weekly_digest webhook."""
+    from datetime import datetime, timedelta
+
+    while True:
+        now = datetime.now()
+        # Find next Sunday 08:00
+        # weekday(): Monday=0, Sunday=6
+        days_until_sunday = (6 - now.weekday()) % 7
+        if days_until_sunday == 0 and now.hour >= 8:
+            days_until_sunday = 7
+        target = now.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=days_until_sunday)
+        sleep_secs = (target - now).total_seconds()
+        await asyncio.sleep(sleep_secs)
+        try:
+            from tokenlens.digest import generate_digest
+            from tokenlens.pricing import PricingTable
+            from tokenlens.webhooks import dispatch_webhook
+            pricing = PricingTable()
+            report = generate_digest(store=store, pricing=pricing, days=7)
+            webhook_url = store.get_setting("webhook.url")
+            webhook_enabled = store.get_setting("webhook.enabled") == "true"
+            webhook_events = store.get_setting("webhook.events") or ""
+            if webhook_enabled and webhook_url and "weekly_digest" in webhook_events:
+                await dispatch_webhook(url=webhook_url, event={"type": "weekly_digest", "data": report})
+        except Exception:
+            _log.exception("Weekly digest dispatch failed")
+
+
 def schedule_rollups(
     store: UsageStore,
     raw_days: int = 1,
@@ -149,5 +178,6 @@ def schedule_rollups(
     tasks = [
         asyncio.create_task(_nightly_rollup_loop(store, raw_days)),
         asyncio.create_task(_yearly_rollup_loop(store, daily_days)),
+        asyncio.create_task(_weekly_digest_loop(store)),
     ]
     return tasks

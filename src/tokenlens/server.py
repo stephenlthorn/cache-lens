@@ -748,6 +748,15 @@ def create_app(
         p: PricingTable = request.app.state.pricing
         return JSONResponse(content=analyze_right_sizing(store=s, pricing=p, days=days))
 
+    # --- Weekly Digest ---
+
+    @app.get("/api/usage/digest")
+    def api_digest(request: Request, days: int = 7) -> JSONResponse:
+        from tokenlens.digest import generate_digest
+        s: UsageStore = request.app.state.store
+        p: PricingTable = request.app.state.pricing
+        return JSONResponse(content=generate_digest(store=s, pricing=p, days=days))
+
     # --- Webhook Notifications ---
 
     @app.get("/api/settings/webhooks")

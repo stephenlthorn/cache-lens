@@ -180,3 +180,23 @@ def top(port: int) -> None:
     """Live terminal view of API traffic (htop-style)."""
     from tokenlens.top import run_top
     run_top(port=port)
+
+
+@main.command("report")
+@click.option("--days", default=7, show_default=True, help="Days to include")
+@click.option("--format", "fmt", default="human", type=click.Choice(["human", "json"]))
+@click.option("--port", default=8420, show_default=True)
+def report_cmd(days: int, fmt: str, port: int) -> None:
+    """Print a cost digest report."""
+    import json as _json
+    import httpx
+    try:
+        r = httpx.get(f"http://127.0.0.1:{port}/api/usage/digest?days={days}", timeout=5.0)
+        data = r.json()
+        if fmt == "json":
+            click.echo(_json.dumps(data, indent=2))
+        else:
+            from tokenlens.digest import format_digest_human
+            click.echo(format_digest_human(data))
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
