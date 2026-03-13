@@ -1492,5 +1492,23 @@ loadDeepDive = async function() {
   loadTokenCostBreakdown();
 };
 
+async function loadWasteSummary() {
+  try {
+    const r = await fetch(apiUrl('/api/usage/waste-summary?days=30'));
+    const d = await r.json();
+    const wtEl = el('kpi-waste-tokens');
+    const wsEl = el('kpi-waste-savings');
+    if (wtEl) wtEl.textContent = d.total_waste_tokens
+      ? `${d.total_waste_tokens.toLocaleString()} tok`
+      : '—';
+    if (wsEl) wsEl.textContent = d.total_savings_usd
+      ? `Saved: $${d.total_savings_usd.toFixed(2)}`
+      : 'No waste found';
+  } catch (e) {
+    // silent fail
+  }
+}
+loadWasteSummary();
+
 // Start on dashboard — must be last so all let/const variables are initialized
 switchPage('dashboard');
