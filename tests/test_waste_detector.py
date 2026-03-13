@@ -117,3 +117,16 @@ def test_waste_item_dataclass():
     )
     assert item.waste_type == "whitespace"
     assert item.waste_tokens == 10
+
+
+def test_redundant_instructions_no_inflation():
+    """Redundant detection should return 1 WasteItem, not multiple overlapping ones."""
+    instruction = "Always respond in JSON format. Include a 'status' field."
+    body = _make_request([
+        {"role": "system", "content": f"Be helpful. {instruction}"},
+        {"role": "user", "content": f"Do something. {instruction}"},
+    ])
+    items = detect_waste(body, provider="anthropic")
+    redundant = [i for i in items if i.waste_type == "redundant_instruction"]
+    assert len(redundant) == 1
+    assert redundant[0].waste_tokens > 0

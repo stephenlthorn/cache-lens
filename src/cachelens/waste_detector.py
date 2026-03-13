@@ -21,12 +21,12 @@ _TOKENIZER = tiktoken.get_encoding("cl100k_base")
 
 _FILLER_PHRASES = [
     "certainly!", "certainly,", "i'd be happy to", "i would be happy to",
-    "sure thing!", "sure,", "of course!", "of course,", "great question!",
+    "sure thing!", "of course!", "of course,", "great question!",
     "absolutely!", "absolutely,", "definitely!", "definitely,",
     "i'm here to help", "i am here to help", "feel free to",
     "i'd love to", "i would love to", "no problem!", "no problem,",
     "happy to help", "glad to help", "by all means", "with pleasure",
-    "without a doubt", "indeed,", "to clarify,", "as i mentioned",
+    "without a doubt", "to clarify,", "as i mentioned",
     "as mentioned", "as previously stated", "let me help you with that",
 ]
 
@@ -34,7 +34,7 @@ _EXCESS_NEWLINES = re.compile(r"\n{3,}")
 _TRAILING_SPACES = re.compile(r"[ \t]{3,}")
 
 
-@dataclass
+@dataclass(frozen=True)
 class WasteItem:
     waste_type: str  # 'whitespace' | 'polite_filler' | 'redundant_instruction' | 'empty_message'
     waste_tokens: int
@@ -116,7 +116,6 @@ def _ngrams_from_content(content: str, min_len: int = 50) -> list[str]:
         if len(line) >= min_len:
             ngrams.append(line)
             continue
-        # For shorter lines, try combining consecutive lines via word ngrams
     # Also try whole-content sliding window over word tokens
     words = content.split()
     for start in range(len(words)):
@@ -133,34 +132,38 @@ def _detect_redundant_instructions(messages: list[dict], provider: str) -> list[
     all_content = [
         (i, msg.get("content") or "")
         for i, msg in enumerate(messages)
-        if isinstance(msg.get("content"), str)
+        if isinstance(msg.get("content"), str) and msg.get("content")
     ]
 
-    # Track which message indices contain each block
     blocks: dict[str, list[int]] = {}
     for i, content in all_content:
-        seen_in_msg: set[str] = set()
         for phrase in _ngrams_from_content(content):
-            if phrase not in seen_in_msg:
-                seen_in_msg.add(phrase)
-                blocks.setdefault(phrase, []).append(i)
+            locs = blocks.setdefault(phrase, [])
+            if i not in locs:
+                locs.append(i)
+
+    # Collect candidates: phrases appearing in 2+ distinct messages
+    candidates = [
+        (block, locs)
+        for block, locs in blocks.items()
+        if len(locs) >= 2
+    ]
+    # Sort longest-first so superstrings are processed before substrings
+    candidates.sort(key=lambda x: len(x[0]), reverse=True)
 
     items: list[WasteItem] = []
-    seen: set[str] = set()
-    for block, locations in blocks.items():
-        unique_locations = list(dict.fromkeys(locations))  # preserve order, deduplicate
-        if len(unique_locations) < 2 or block in seen:
+    accepted: list[str] = []
+    for block, locs in candidates:
+        # Skip if this block is a substring of an already-accepted longer block
+        if any(block in longer for longer in accepted):
             continue
-        # Skip if this block is a substring of an already-recorded longer block
-        if any(block in longer for longer in seen):
-            continue
-        seen.add(block)
-        waste_tokens = _count_tokens(block) * (len(unique_locations) - 1)
+        accepted.append(block)
+        waste_tokens = _count_tokens(block) * (len(locs) - 1)
         items.append(WasteItem(
             waste_type="redundant_instruction",
             waste_tokens=waste_tokens,
             savings_usd=_estimate_savings(waste_tokens, provider),
-            detail=json.dumps({"locations": unique_locations, "snippet": block[:100]}),
+            detail=json.dumps({"locations": locs, "snippet": block[:100]}),
         ))
     return items
 
@@ -169,8 +172,8 @@ def _detect_empty_messages(messages: list[dict], provider: str) -> list[WasteIte
     """Detect messages with < 5 tokens of content."""
     items: list[WasteItem] = []
     for i, msg in enumerate(messages):
-        content = msg.get("content") or ""
-        if not isinstance(content, str):
+        content = msg.get("content")
+        if content is None or not isinstance(content, str):
             continue
         tok_count = _count_tokens(content)
         if tok_count < 5:
