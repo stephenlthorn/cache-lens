@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from datetime import date, timedelta
 from cachelens.store import UsageStore
@@ -132,7 +134,6 @@ def test_only_checks_last_30_days(store):
 
 def test_recommendations_include_todays_live_calls(store):
     """generate_recommendations must include today's raw calls before nightly rollup."""
-    import time
     # Insert 150 raw calls today (no rollup, so nothing in daily_agg yet)
     for i in range(150):
         store.insert_call(
@@ -258,3 +259,69 @@ def test_downsell_at_threshold(store):
                   call_count=10, cost_usd=0.50)
     recs = generate_recommendations(store)
     assert any(r.type == "downsell_opportunity" for r in recs)
+
+
+# ---------------------------------------------------------------------------
+# history_bloat recommendation tests
+# ---------------------------------------------------------------------------
+
+
+def test_history_bloat_recommendation_triggers(store: UsageStore):
+    """history_bloat triggers when avg_history_ratio > 0.6 and call_count >= 5."""
+    now = int(time.time())
+    for i in range(5):
+        store.insert_call(
+            ts=now - i * 60, provider="anthropic", model="claude-sonnet-4-6",
+            source="chatbot", source_tag=None,
+            input_tokens=1000, output_tokens=200,
+            cache_read_tokens=0, cache_write_tokens=0,
+            cost_usd=0.01, endpoint="/v1/messages",
+            request_hash=f"hb_trigger{i}",
+            message_count=10,
+            history_tokens=700,
+            history_ratio=0.7,
+        )
+    recs = generate_recommendations(store)
+    history_recs = [r for r in recs if r.type == "history_bloat"]
+    assert len(history_recs) >= 1
+    assert history_recs[0].metrics["source"] == "chatbot"
+
+
+def test_history_bloat_recommendation_below_threshold(store: UsageStore):
+    """history_bloat does not trigger when avg_history_ratio <= 0.6."""
+    now = int(time.time())
+    for i in range(5):
+        store.insert_call(
+            ts=now - i * 60, provider="anthropic", model="claude-sonnet-4-6",
+            source="chatbot", source_tag=None,
+            input_tokens=1000, output_tokens=200,
+            cache_read_tokens=0, cache_write_tokens=0,
+            cost_usd=0.01, endpoint="/v1/messages",
+            request_hash=f"hb_low{i}",
+            message_count=10,
+            history_tokens=400,
+            history_ratio=0.4,
+        )
+    recs = generate_recommendations(store)
+    history_recs = [r for r in recs if r.type == "history_bloat"]
+    assert len(history_recs) == 0
+
+
+def test_history_bloat_recommendation_insufficient_calls(store: UsageStore):
+    """history_bloat does not trigger when call_count < 5."""
+    now = int(time.time())
+    for i in range(4):  # only 4 calls, below the 5-call minimum
+        store.insert_call(
+            ts=now - i * 60, provider="anthropic", model="claude-sonnet-4-6",
+            source="chatbot", source_tag=None,
+            input_tokens=1000, output_tokens=200,
+            cache_read_tokens=0, cache_write_tokens=0,
+            cost_usd=0.01, endpoint="/v1/messages",
+            request_hash=f"hb_few{i}",
+            message_count=10,
+            history_tokens=700,
+            history_ratio=0.7,
+        )
+    recs = generate_recommendations(store)
+    history_recs = [r for r in recs if r.type == "history_bloat"]
+    assert len(history_recs) == 0

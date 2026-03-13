@@ -433,7 +433,15 @@ async def handle_proxy_request(
 
                         def _tok(m: dict) -> int:
                             c = m.get("content") or ""
-                            return len(enc.encode(c)) if isinstance(c, str) else 0
+                            if isinstance(c, str):
+                                return len(enc.encode(c))
+                            if isinstance(c, list):
+                                text = " ".join(
+                                    block.get("text", "") for block in c
+                                    if isinstance(block, dict) and block.get("type") == "text"
+                                )
+                                return len(enc.encode(text)) if text else 0
+                            return 0
 
                         _history_tokens = sum(_tok(m) for m in history_msgs)
                         total_input = sum(_tok(m) for m in messages)

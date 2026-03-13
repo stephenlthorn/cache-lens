@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
@@ -98,7 +99,6 @@ def generate_recommendations(store: UsageStore) -> list[Recommendation]:
         eff_rows = store.output_efficiency(days=30)
         for row in eff_rows:
             if row.get("avg_utilization", 1.0) < 0.25 and row.get("call_count", 0) >= 10:
-                import hashlib
                 rec_id = hashlib.md5(
                     f"output_bloat:{row['source']}:{row['model']}".encode()
                 ).hexdigest()[:12]
@@ -124,7 +124,6 @@ def generate_recommendations(store: UsageStore) -> list[Recommendation]:
 
     # Check: history bloat — sources with high history token ratio
     try:
-        import hashlib
         conv_rows = store.conversation_efficiency(days=30)
         for row in conv_rows:
             if row["avg_history_ratio"] > 0.6 and row["call_count"] >= 5:
