@@ -9,9 +9,9 @@ TokenLens is a transparent proxy + dashboard that tracks every AI API call, show
 - **Real-time** — live WebSocket feed of every API call
 - **Works with** Anthropic, OpenAI, and Google AI
 
-![TokenLens Dashboard](doc/dashboard.png)
-![TokenLens Insights](doc/insights.png)
-![TokenLens Analyze](doc/analyze.png)
+![TokenLens Dashboard](docs/dashboard.png)
+![TokenLens Insights](docs/insights.png)
+![TokenLens Analyze](docs/analyze.png)
 
 ---
 
