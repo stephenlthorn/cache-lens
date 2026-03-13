@@ -708,6 +708,18 @@ def create_app(
             "timeline": s.rate_limit_events(days=days),
         })
 
+    # --- Waste Analysis ---
+
+    @app.get("/api/usage/waste-summary")
+    def api_waste_summary(request: Request, days: int = 30) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        return JSONResponse(content=s.waste_summary(days=days))
+
+    @app.get("/api/usage/waste/{call_id}")
+    def api_waste_detail(call_id: int, request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        return JSONResponse(content=s.get_waste_for_call(call_id))
+
     # --- Webhook Notifications ---
 
     @app.get("/api/settings/webhooks")

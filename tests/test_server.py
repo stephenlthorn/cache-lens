@@ -886,6 +886,56 @@ def test_rate_limits_endpoint_with_data(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# /api/usage/waste-summary and /api/usage/waste/{call_id} (Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_waste_summary_endpoint_empty(client):
+    resp = client.get("/api/usage/waste-summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "total_waste_tokens" in data
+    assert data["total_waste_tokens"] == 0
+
+
+def test_waste_summary_endpoint_with_data(client: TestClient, test_store: UsageStore):
+    # Insert a call and waste
+    call_id = test_store.insert_call(
+        ts=int(__import__("time").time()), provider="anthropic",
+        model="claude-sonnet-4-6", source="test", source_tag=None,
+        input_tokens=500, output_tokens=100, cache_read_tokens=0,
+        cache_write_tokens=0, cost_usd=0.01, endpoint="/v1/messages",
+        request_hash="wh1",
+    )
+    test_store.insert_waste_items(call_id=call_id, items=[
+        {"waste_type": "whitespace", "waste_tokens": 30, "savings_usd": 0.0001, "detail": "{}"},
+    ])
+    resp = client.get("/api/usage/waste-summary?days=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_waste_tokens"] == 30
+    assert data["by_type"]["whitespace"] == 30
+
+
+def test_waste_call_detail_endpoint(client: TestClient, test_store: UsageStore):
+    call_id = test_store.insert_call(
+        ts=int(__import__("time").time()), provider="anthropic",
+        model="claude-sonnet-4-6", source="test", source_tag=None,
+        input_tokens=200, output_tokens=50, cache_read_tokens=0,
+        cache_write_tokens=0, cost_usd=0.002, endpoint="/v1/messages",
+        request_hash="wh2",
+    )
+    test_store.insert_waste_items(call_id=call_id, items=[
+        {"waste_type": "polite_filler", "waste_tokens": 15, "savings_usd": 0.00005, "detail": "{}"},
+    ])
+    resp = client.get(f"/api/usage/waste/{call_id}")
+    assert resp.status_code == 200
+    items = resp.json()
+    assert len(items) == 1
+    assert items[0]["waste_type"] == "polite_filler"
+
+
 def test_proxy_route_known_provider_route_is_registered(
     test_store: UsageStore, pricing: PricingTable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
