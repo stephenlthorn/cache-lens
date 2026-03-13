@@ -84,6 +84,13 @@ function fmtCost(n) {
   return `$${n.toFixed(2)}`;
 }
 
+function fmtCompact(n) {
+  if (typeof n !== 'number') return '—';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return n.toLocaleString();
+}
+
 function clamp(n, a, b) { return Math.min(b, Math.max(a, n)); }
 
 function setLoading(loading) {
@@ -469,6 +476,7 @@ function initDashboard() {
   if (dashboardInitialized) return;
   dashboardInitialized = true;
   refreshDashboard();
+  loadTokenAnatomy(7);
   backfillLiveFeed();
   connectLiveFeed();
   setInterval(backfillLiveFeed, 10000);
@@ -480,6 +488,14 @@ function initDashboard() {
       btn.classList.add('tab--active');
       currentChartRange = parseInt(btn.dataset.range, 10);
       loadTokenChart(currentChartRange);
+    });
+  });
+
+  document.querySelectorAll('#taPeriodTabs .tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#taPeriodTabs .tab').forEach(b => b.classList.remove('tab--active'));
+      btn.classList.add('tab--active');
+      loadTokenAnatomy(parseInt(btn.dataset.days, 10));
     });
   });
 }
@@ -512,6 +528,56 @@ async function loadKPIs() {
   }
 }
 
+async function loadTokenAnatomy(days = 7) {
+  try {
+    const r = await fetch(apiUrl(`/api/usage/kpi?days=${days}`));
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+
+    const fresh = d.input_tokens || 0;
+    const cacheWrite = d.cache_write_tokens || 0;
+    const cacheRead = d.cache_read_tokens || 0;
+    const output = d.output_tokens || 0;
+    const total = fresh + cacheWrite + cacheRead + output;
+    const contextTotal = fresh + cacheWrite + cacheRead;
+
+    const setBox = (type, tokens) => {
+      const pct = total > 0 ? (tokens / total * 100) : 0;
+      const tokEl = el(`ta-${type}-tokens`);
+      const pctEl = el(`ta-${type}-pct`);
+      if (tokEl) tokEl.textContent = fmtCompact(tokens);
+      if (pctEl) pctEl.textContent = total > 0 ? pct.toFixed(1) + '% of total' : '';
+    };
+
+    setBox('fresh', fresh);
+    setBox('write', cacheWrite);
+    setBox('read', cacheRead);
+    setBox('out', output);
+
+    const totalEl = el('ta-total');
+    if (totalEl) totalEl.textContent = fmtCompact(total);
+
+    const callsEl = el('ta-calls');
+    if (callsEl) callsEl.textContent = d.call_count ? `${fmtInt(d.call_count)} calls` : '';
+
+    const costEl = el('ta-cost');
+    if (costEl) costEl.textContent = fmtCost(d.total_cost_usd);
+
+    const savEl = el('ta-savings');
+    if (savEl) savEl.textContent = fmtCost(d.savings_usd || 0);
+
+    const cachePctEl = el('ta-cache-pct');
+    if (cachePctEl) {
+      const readPct = contextTotal > 0 ? (cacheRead / contextTotal * 100) : 0;
+      cachePctEl.textContent = readPct.toFixed(1) + '%';
+    }
+  } catch {
+    ['fresh','write','read','out'].forEach(t => {
+      const e = el(`ta-${t}-tokens`); if (e) e.textContent = '—';
+    });
+  }
+}
+
 async function loadTokenChart(days) {
   try {
     const r = await fetch(apiUrl(`/api/usage/daily?days=${days}`));
@@ -531,14 +597,16 @@ function renderTokenChart(rows) {
   const byDate = {};
   for (const row of rows) {
     const d = row.date;
-    if (!byDate[d]) byDate[d] = { input_tokens: 0, cache_read_tokens: 0, output_tokens: 0 };
+    if (!byDate[d]) byDate[d] = { input_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0, output_tokens: 0 };
     byDate[d].input_tokens += row.input_tokens || 0;
+    byDate[d].cache_write_tokens += row.cache_write_tokens || 0;
     byDate[d].cache_read_tokens += row.cache_read_tokens || 0;
     byDate[d].output_tokens += row.output_tokens || 0;
   }
   const dates = Object.keys(byDate).sort();
   const labels = dates;
   const inputData = dates.map(d => byDate[d].input_tokens);
+  const cacheWriteData = dates.map(d => byDate[d].cache_write_tokens);
   const cacheData = dates.map(d => byDate[d].cache_read_tokens);
   const outputData = dates.map(d => byDate[d].output_tokens);
 
@@ -553,23 +621,30 @@ function renderTokenChart(rows) {
       labels,
       datasets: [
         {
-          label: 'Input',
+          label: 'Fresh Input',
           data: inputData,
-          backgroundColor: 'rgba(139,92,246,0.6)',
+          backgroundColor: 'rgba(124,92,255,0.75)',
+          borderRadius: 3,
+          borderSkipped: false,
+        },
+        {
+          label: 'Cache Write',
+          data: cacheWriteData,
+          backgroundColor: 'rgba(255,176,32,0.75)',
           borderRadius: 3,
           borderSkipped: false,
         },
         {
           label: 'Cache Read',
           data: cacheData,
-          backgroundColor: 'rgba(0,255,136,0.5)',
+          backgroundColor: 'rgba(46,233,166,0.75)',
           borderRadius: 3,
           borderSkipped: false,
         },
         {
           label: 'Output',
           data: outputData,
-          backgroundColor: 'rgba(245,158,11,0.5)',
+          backgroundColor: 'rgba(100,160,255,0.75)',
           borderRadius: 3,
           borderSkipped: false,
         },
@@ -585,11 +660,12 @@ function renderTokenChart(rows) {
       },
       scales: {
         x: {
-          stacked: false,
+          stacked: true,
           ticks: { color: '#64748b', maxRotation: 45, font: { size: 10 } },
           grid: { color: 'rgba(255,255,255,0.03)' }
         },
         y: {
+          stacked: true,
           ticks: { color: '#64748b', font: { size: 10 } },
           grid: { color: 'rgba(255,255,255,0.04)' }
         }
@@ -785,6 +861,7 @@ function addLiveFeedRow(data) {
     <td class="mono-sm">${escapeHtml(data.model || '—')}</td>
     <td>${escapeHtml(data.source || '—')}</td>
     <td>${fmtInt(data.input_tokens)}</td>
+    <td>${fmtInt(data.cache_write_tokens)}</td>
     <td>${fmtInt(data.cache_read_tokens)}</td>
     <td>${fmtInt(data.output_tokens)}</td>
     <td>${fmtCost(data.cost_usd)}</td>
@@ -836,8 +913,9 @@ async function loadDeepDive() {
 
     deepDiveData = rows.map(row => {
       const cacheRead = row.cache_read_tokens || 0;
+      const cacheWrite = row.cache_write_tokens || 0;
       const inputTok = row.input_tokens || 0;
-      const denom = cacheRead + inputTok;
+      const denom = cacheRead + cacheWrite + inputTok;
       return {
         ...row,
         cache_hit_pct: denom > 0 ? (cacheRead / denom) * 100 : 0,
@@ -852,7 +930,7 @@ async function loadDeepDive() {
     populateProviderFilter(rows);
   } catch (err) {
     if (meta) meta.textContent = 'Error loading data';
-    el('deepDiveBody').innerHTML = `<tr><td colspan="10" class="table-empty">Failed: ${escapeHtml(err.message)}</td></tr>`;
+    el('deepDiveBody').innerHTML = `<tr><td colspan="11" class="table-empty">Failed: ${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -883,7 +961,7 @@ function renderDeepDiveTable() {
   });
 
   if (sorted.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="table-empty">No records match the filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="table-empty">No records match the filters.</td></tr>';
     return;
   }
 
@@ -895,6 +973,7 @@ function renderDeepDiveTable() {
       <td>${escapeHtml(row.source || '—')}</td>
       <td>${fmtInt(row.call_count)}</td>
       <td>${fmtInt(row.input_tokens)}</td>
+      <td>${fmtInt(row.cache_write_tokens)}</td>
       <td>${fmtInt(row.cache_read_tokens)}</td>
       <td>${row.cache_hit_pct != null ? row.cache_hit_pct.toFixed(1) + '%' : '—'}</td>
       <td>${fmtInt(row.output_tokens)}</td>
@@ -909,19 +988,20 @@ function renderCacheEfficiency() {
 
   const anthropicRows = deepDiveData.filter(r => (r.provider || '').toLowerCase() === 'anthropic');
   if (anthropicRows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="table-empty">No Anthropic rows in current filter.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="table-empty">No Anthropic rows in current filter.</td></tr>';
     return;
   }
 
   tbody.innerHTML = anthropicRows.map(row => {
     const hitPct = row.cache_hit_pct != null ? row.cache_hit_pct.toFixed(1) + '%' : '—';
-    const hitClass = row.cache_hit_pct >= 50 ? 'hit-good' : row.cache_hit_pct >= 20 ? 'hit-ok' : 'hit-poor';
+    const hitClass = row.cache_hit_pct >= 80 ? 'hit-good' : row.cache_hit_pct >= 40 ? 'hit-ok' : 'hit-poor';
     return `
       <tr>
         <td>${escapeHtml(row.date || '—')}</td>
         <td class="mono-sm">${escapeHtml(row.model || '—')}</td>
         <td>${escapeHtml(row.source || '—')}</td>
         <td>${fmtInt(row.input_tokens)}</td>
+        <td>${fmtInt(row.cache_write_tokens)}</td>
         <td>${fmtInt(row.cache_read_tokens)}</td>
         <td><span class="hit-badge ${hitClass}">${hitPct}</span></td>
       </tr>

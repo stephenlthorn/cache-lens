@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TokenLens</title>
   <meta name="color-scheme" content="dark" />
-  <link rel="stylesheet" href="/static/style.css?v=9" />
+  <link rel="stylesheet" href="/static/style.css?v=10" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -127,6 +127,82 @@
     <!-- PAGE: Dashboard -->
     <div id="page-dashboard" class="page-content">
 
+      <!-- Claude billing explainer -->
+      <div class="cache-explainer">
+        <strong>How Claude billing works — every API call has 4 token types:</strong>
+        <div class="ce-row">
+          <span class="ce-chip"><span class="ce-dot" style="background:rgba(124,92,255,1)"></span> <strong>Fresh Input</strong> — new tokens your app sends this turn. Full price.</span>
+          <span class="ce-chip"><span class="ce-dot" style="background:rgba(255,176,32,1)"></span> <strong>Cache Write</strong> — context written to cache for the first time. 1.25× price, one-time cost.</span>
+          <span class="ce-chip"><span class="ce-dot" style="background:rgba(46,233,166,1)"></span> <strong>Cache Read</strong> — context retrieved from cache. Only 0.1× price — 10× cheaper.</span>
+          <span class="ce-chip"><span class="ce-dot" style="background:rgba(100,160,255,1)"></span> <strong>Output</strong> — tokens Claude generates. Full price.</span>
+        </div>
+        Claude Code caches your entire system prompt + conversation history, so each turn only sends a few fresh tokens — everything else is a cheap cache read.
+      </div>
+
+      <!-- Token Anatomy -->
+      <div class="token-anatomy">
+        <div class="token-anatomy__header">
+          <h3>Token Breakdown</h3>
+          <div class="ta-period-tabs" id="taPeriodTabs">
+            <button class="tab" data-days="1">Today</button>
+            <button class="tab tab--active" data-days="7">7d</button>
+            <button class="tab" data-days="30">30d</button>
+            <button class="tab" data-days="365">365d</button>
+          </div>
+        </div>
+        <div class="token-boxes">
+          <div class="token-box token-box--fresh">
+            <div class="tb-label">Fresh Input</div>
+            <div class="tb-desc">New tokens sent this turn — not cached</div>
+            <div class="tb-tokens" id="ta-fresh-tokens">—</div>
+            <div class="tb-pct" id="ta-fresh-pct"></div>
+            <div class="tb-rate">Full price</div>
+          </div>
+          <div class="token-box token-box--write">
+            <div class="tb-label">Cache Write</div>
+            <div class="tb-desc">Context written to cache for the first time</div>
+            <div class="tb-tokens" id="ta-write-tokens">—</div>
+            <div class="tb-pct" id="ta-write-pct"></div>
+            <div class="tb-rate">1.25× price (one-time)</div>
+          </div>
+          <div class="token-box token-box--read">
+            <div class="tb-label">Cache Read</div>
+            <div class="tb-desc">Context retrieved from cache — already stored</div>
+            <div class="tb-tokens" id="ta-read-tokens">—</div>
+            <div class="tb-pct" id="ta-read-pct"></div>
+            <div class="tb-rate">0.1× price — 10× cheaper</div>
+          </div>
+          <div class="token-box token-box--output">
+            <div class="tb-label">Output</div>
+            <div class="tb-desc">Tokens Claude generated in response</div>
+            <div class="tb-tokens" id="ta-out-tokens">—</div>
+            <div class="tb-pct" id="ta-out-pct"></div>
+            <div class="tb-rate">Full price</div>
+          </div>
+        </div>
+        <div class="token-summary">
+          <div class="ts-item">
+            <div class="ts-label">Total Tokens</div>
+            <div class="ts-value" id="ta-total">—</div>
+            <div class="ts-sub" id="ta-calls"></div>
+          </div>
+          <div class="ts-item">
+            <div class="ts-label">Actual Cost</div>
+            <div class="ts-value" id="ta-cost">—</div>
+          </div>
+          <div class="ts-item">
+            <div class="ts-label">Cache Savings</div>
+            <div class="ts-value ts-value--green" id="ta-savings">—</div>
+            <div class="ts-sub">vs paying full price for reads</div>
+          </div>
+          <div class="ts-item">
+            <div class="ts-label">Cache Read %</div>
+            <div class="ts-value" id="ta-cache-pct">—</div>
+            <div class="ts-sub">of total context tokens</div>
+          </div>
+        </div>
+      </div>
+
       <!-- KPI Cards — hero section -->
       <div class="kpi-grid">
         <div class="kpi-card">
@@ -205,14 +281,15 @@
                 <th>Provider</th>
                 <th>Model</th>
                 <th>Source</th>
-                <th>Input</th>
+                <th>Fresh In</th>
+                <th>Cache Write</th>
                 <th>Cache Read</th>
                 <th>Output</th>
                 <th>Cost</th>
               </tr>
             </thead>
             <tbody id="liveFeedBody">
-              <tr><td colspan="8" class="table-empty">Waiting for calls&hellip;</td></tr>
+              <tr><td colspan="9" class="table-empty">Waiting for calls&hellip;</td></tr>
             </tbody>
           </table>
         </div>
@@ -333,7 +410,8 @@
                 <th data-col="model" class="sortable">Model <span class="sort-icon">&updownarrow;</span></th>
                 <th data-col="source" class="sortable">Source <span class="sort-icon">&updownarrow;</span></th>
                 <th data-col="calls" class="sortable">Calls <span class="sort-icon">&updownarrow;</span></th>
-                <th data-col="input_tokens" class="sortable">Input <span class="sort-icon">&updownarrow;</span></th>
+                <th data-col="input_tokens" class="sortable">Fresh In <span class="sort-icon">&updownarrow;</span></th>
+                <th data-col="cache_write_tokens" class="sortable">Cache Write <span class="sort-icon">&updownarrow;</span></th>
                 <th data-col="cache_read_tokens" class="sortable">Cache Read <span class="sort-icon">&updownarrow;</span></th>
                 <th data-col="cache_hit_pct" class="sortable">Hit % <span class="sort-icon">&updownarrow;</span></th>
                 <th data-col="output_tokens" class="sortable">Output <span class="sort-icon">&updownarrow;</span></th>
@@ -341,7 +419,7 @@
               </tr>
             </thead>
             <tbody id="deepDiveBody">
-              <tr><td colspan="10" class="table-empty">Apply filters to load data.</td></tr>
+              <tr><td colspan="11" class="table-empty">Apply filters to load data.</td></tr>
             </tbody>
           </table>
         </div>
@@ -357,7 +435,7 @@
       <div class="card card--wide" id="cacheEfficiencyCard">
         <div class="card__header">
           <h3>Cache Efficiency</h3>
-          <div class="meta">cache_read / (cache_read + input) &times; 100</div>
+          <div class="meta">cache_read_tokens / (fresh_input + cache_write + cache_read) &times; 100 &mdash; how much of total context came from cache</div>
         </div>
         <div class="table-scroll">
           <table class="data-table">
@@ -366,13 +444,14 @@
                 <th>Date</th>
                 <th>Model</th>
                 <th>Source</th>
-                <th>Input</th>
+                <th>Input Tokens</th>
+                <th>Cache Write</th>
                 <th>Cache Read</th>
                 <th>Hit %</th>
               </tr>
             </thead>
             <tbody id="cacheEfficiencyBody">
-              <tr><td colspan="6" class="table-empty">No data loaded.</td></tr>
+              <tr><td colspan="7" class="table-empty">No data loaded.</td></tr>
             </tbody>
           </table>
         </div>
@@ -513,6 +592,6 @@
     </div>
   </footer>
 
-  <script src="/static/app.js?v=10"></script>
+  <script src="/static/app.js?v=11"></script>
 </body>
 </html>
