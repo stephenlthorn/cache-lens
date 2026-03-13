@@ -858,6 +858,26 @@ class UsageStore:
             "by_type": by_type,
         }
 
+    def output_efficiency(self, days: int = 30) -> list[dict]:
+        """Per source+model: avg utilization, call count, suggested max_tokens."""
+        cutoff = int(time.time()) - days * 86400
+        with self._lock:
+            rows = self._con.execute(
+                """
+                SELECT source, model, provider,
+                       COUNT(*) as call_count,
+                       AVG(output_utilization) as avg_utilization,
+                       AVG(output_tokens) as avg_output_tokens,
+                       MAX(output_tokens) as max_output_tokens
+                FROM calls
+                WHERE ts >= ? AND output_utilization IS NOT NULL AND output_utilization < 0.5
+                GROUP BY source, model, provider
+                HAVING call_count >= 10
+                """,
+                (cutoff,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def close(self) -> None:
         self._con.close()
 

@@ -976,3 +976,37 @@ def test_proxy_route_known_provider_route_is_registered(
         )
         # Route is registered and attempts to proxy — should not be a 404
         assert response.status_code != 404
+
+
+# ---------------------------------------------------------------------------
+# /api/usage/output-efficiency (Task 8)
+# ---------------------------------------------------------------------------
+
+
+def test_output_efficiency_endpoint_empty(client: TestClient) -> None:
+    resp = client.get("/api/usage/output-efficiency")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+
+
+def test_output_efficiency_calculates_utilization(client: TestClient, test_store: UsageStore) -> None:
+    now = int(__import__("time").time())
+    for i in range(12):
+        test_store.insert_call(
+            ts=now - i * 60, provider="anthropic", model="claude-sonnet-4-6",
+            source="myapp", source_tag=None,
+            input_tokens=500, output_tokens=50,
+            cache_read_tokens=0, cache_write_tokens=0,
+            cost_usd=0.005, endpoint="/v1/messages",
+            request_hash=f"oe{i}",
+            max_tokens_requested=400,
+            output_utilization=0.125,
+        )
+    resp = client.get("/api/usage/output-efficiency?days=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) > 0
+    row = next(r for r in data if r["source"] == "myapp")
+    assert row["avg_utilization"] == pytest.approx(0.125, rel=0.01)
+    assert row["call_count"] == 12

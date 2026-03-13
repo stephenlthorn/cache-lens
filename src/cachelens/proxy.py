@@ -400,6 +400,18 @@ async def handle_proxy_request(
     # Run waste detection on parsed request body
     _waste_items = detect_waste(parsed_body, parsed.provider) if parsed_body is not None else []
 
+    # Extract max_tokens_requested from request body
+    _max_tokens_requested: int | None = None
+    if parsed_body is not None:
+        for field in ("max_tokens", "maxOutputTokens"):
+            val = parsed_body.get(field)
+            if val is not None:
+                try:
+                    _max_tokens_requested = int(val)
+                except (TypeError, ValueError):
+                    pass
+                break
+
     # Determine streaming: Google uses path (streamGenerateContent), others use body
     if parsed.provider == "google":
         streaming = "streamGenerateContent" in parsed.upstream_path
@@ -439,6 +451,7 @@ async def handle_proxy_request(
             user_agent=user_agent,
             parsed_body=parsed_body,
             _waste_items=_waste_items,
+            _max_tokens_requested=_max_tokens_requested,
         )
     else:
         async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
@@ -458,6 +471,7 @@ async def handle_proxy_request(
                 dedup_enabled=dedup_enabled,
                 parsed_body=parsed_body,
                 _waste_items=_waste_items,
+                _max_tokens_requested=_max_tokens_requested,
             )
 
 
@@ -558,6 +572,11 @@ class _UpstreamStreamResponse(Response):
                             request_hash=self._request_hash,
                             usage=usage,
                             user_agent=self._user_agent,
+                            max_tokens_requested=self._max_tokens_requested,
+                            message_count=self._message_count,
+                            history_tokens=self._history_tokens,
+                            history_ratio=self._history_ratio,
+                            token_heatmap=self._token_heatmap,
                         )
                         if self._waste_items:
                             self._store.insert_waste_items(
@@ -615,6 +634,11 @@ async def _handle_non_streaming(
                 user_agent=user_agent,
                 latency_ms=latency_ms,
                 status_code=response.status_code,
+                max_tokens_requested=_max_tokens_requested,
+                message_count=_message_count,
+                history_tokens=_history_tokens,
+                history_ratio=_history_ratio,
+                token_heatmap=_token_heatmap,
             )
             if _waste_items:
                 store.insert_waste_items(
@@ -675,6 +699,11 @@ def _record_call(
     user_agent: str = "",
     latency_ms: float | None = None,
     status_code: int | None = None,
+    max_tokens_requested: int | None = None,
+    message_count: int | None = None,
+    history_tokens: int | None = None,
+    history_ratio: float | None = None,
+    token_heatmap: str | None = None,
 ) -> dict:
     """Record call in store and return event dict for WebSocket broadcast."""
     model = usage.get("model") or "unknown"
@@ -693,6 +722,10 @@ def _record_call(
         cache_write_tokens=cache_write_tokens,
     )
 
+    output_utilization: float | None = None
+    if max_tokens_requested and max_tokens_requested > 0 and output_tokens > 0:
+        output_utilization = output_tokens / max_tokens_requested
+
     call_id = store.insert_call(
         ts=ts,
         provider=parsed.provider,
@@ -709,6 +742,12 @@ def _record_call(
         user_agent=user_agent,
         latency_ms=latency_ms,
         status_code=status_code,
+        max_tokens_requested=max_tokens_requested,
+        output_utilization=output_utilization,
+        message_count=message_count,
+        history_tokens=history_tokens,
+        history_ratio=history_ratio,
+        token_heatmap=token_heatmap,
     )
 
     return {

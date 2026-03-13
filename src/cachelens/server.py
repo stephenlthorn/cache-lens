@@ -720,6 +720,11 @@ def create_app(
         s: UsageStore = request.app.state.store
         return JSONResponse(content=s.get_waste_for_call(call_id))
 
+    @app.get("/api/usage/output-efficiency")
+    def api_output_efficiency(request: Request, days: int = 30) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        return JSONResponse(content=s.output_efficiency(days=days))
+
     # --- Webhook Notifications ---
 
     @app.get("/api/settings/webhooks")

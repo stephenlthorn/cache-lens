@@ -24,6 +24,7 @@ class Recommendation:
         "low_cache_hit_rate", "downsell_opportunity", "cache_write_waste",
         "spend_spike", "bloated_prompts", "caching_opportunity",
         "efficiency_regression", "source_consolidation",
+        "output_bloat", "history_bloat", "right_sizing",
     ]
     title: str
     description: str
@@ -91,6 +92,35 @@ def generate_recommendations(store: UsageStore) -> list[Recommendation]:
     recommendations.extend(_check_caching_opportunity(rows))
     recommendations.extend(_check_efficiency_regression(raw_rows))
     recommendations.extend(_check_source_consolidation(rows))
+
+    # Check: output bloat — sources using < 25% of their max_tokens budget
+    try:
+        eff_rows = store.output_efficiency(days=30)
+        for row in eff_rows:
+            if row.get("avg_utilization", 1.0) < 0.25 and row.get("call_count", 0) >= 10:
+                import hashlib
+                rec_id = hashlib.md5(
+                    f"output_bloat:{row['source']}:{row['model']}".encode()
+                ).hexdigest()[:12]
+                recommendations.append(Recommendation(
+                    id=rec_id,
+                    type="output_bloat",
+                    title=f"Oversized max_tokens for {row['source']}",
+                    description=(
+                        f"Source '{row['source']}' ({row['model']}) uses only "
+                        f"{row['avg_utilization']*100:.0f}% of its max_tokens budget on average "
+                        f"across {row['call_count']} calls. Reducing max_tokens can cut costs."
+                    ),
+                    estimated_impact="medium",
+                    deep_dive_link="/api/usage/output-efficiency",
+                    metrics={
+                        "avg_utilization": round(row["avg_utilization"], 3),
+                        "call_count": row["call_count"],
+                        "model": row["model"],
+                    },
+                ))
+    except Exception:
+        pass  # output_efficiency may not exist on old DBs; skip gracefully
 
     return _rank(recommendations)
 
