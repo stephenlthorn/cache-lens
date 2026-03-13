@@ -86,3 +86,62 @@ def test_savings_usd_unknown_model_returns_zero():
         cache_read_tokens=1_000_000,
     )
     assert savings == 0.0
+
+
+# ---------------------------------------------------------------------------
+# get_all_prices / apply_overrides_from_dict (Custom Pricing Overrides)
+# ---------------------------------------------------------------------------
+
+
+def test_get_all_prices_returns_dict():
+    """PricingTable.get_all_prices() returns a dict of model -> rate dicts."""
+    table = PricingTable()
+    prices = table.get_all_prices()
+    assert isinstance(prices, dict)
+    assert "claude-sonnet-4-6" in prices
+    assert "input" in prices["claude-sonnet-4-6"]
+    assert "output" in prices["claude-sonnet-4-6"]
+    assert "cache_read" in prices["claude-sonnet-4-6"]
+    assert "cache_write" in prices["claude-sonnet-4-6"]
+
+
+def test_apply_overrides_updates_rates():
+    """After apply_overrides_from_dict, cost_usd changes accordingly."""
+    table = PricingTable()
+    original_cost = table.cost_usd(
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        input_tokens=1_000_000,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+    )
+    assert original_cost == pytest.approx(3.0, rel=0.01)
+
+    table.apply_overrides_from_dict({
+        "claude-sonnet-4-6": {"input": 10.0},
+    })
+    new_cost = table.cost_usd(
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        input_tokens=1_000_000,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+    )
+    assert new_cost == pytest.approx(10.0, rel=0.01)
+
+
+def test_apply_overrides_partial_keys_preserves_others():
+    """Overriding only 'input' preserves existing output/cache_read/cache_write."""
+    table = PricingTable()
+    original = table.get_all_prices()["claude-sonnet-4-6"].copy()
+
+    table.apply_overrides_from_dict({
+        "claude-sonnet-4-6": {"input": 99.0},
+    })
+    updated = table.get_all_prices()["claude-sonnet-4-6"]
+    assert updated["input"] == 99.0
+    assert updated["output"] == original["output"]
+    assert updated["cache_read"] == original["cache_read"]
+    assert updated["cache_write"] == original["cache_write"]

@@ -62,8 +62,26 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS response_cache (
+    request_hash TEXT PRIMARY KEY,
+    response_body BLOB NOT NULL,
+    response_status INTEGER NOT NULL,
+    response_headers TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    cached_at INTEGER NOT NULL,
+    ttl_seconds INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS request_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    call_id INTEGER NOT NULL,
+    ts INTEGER NOT NULL,
+    request_body TEXT,
+    response_body TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts);
 CREATE INDEX IF NOT EXISTS idx_daily_agg_date ON daily_agg(date);
+CREATE INDEX IF NOT EXISTS idx_request_log_ts ON request_log(ts);
 """
 
 
@@ -88,23 +106,32 @@ class UsageStore:
             self._con.execute(
                 "ALTER TABLE calls ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''"
             )
+        if "latency_ms" not in cols:
+            self._con.execute("ALTER TABLE calls ADD COLUMN latency_ms REAL")
+        if "status_code" not in cols:
+            self._con.execute("ALTER TABLE calls ADD COLUMN status_code INTEGER")
 
     def insert_call(self, *, ts: int, provider: str, model: str,
                     source: str, source_tag: str | None,
                     input_tokens: int, output_tokens: int,
                     cache_read_tokens: int, cache_write_tokens: int,
                     cost_usd: float, endpoint: str, request_hash: str,
-                    user_agent: str = "") -> None:
+                    user_agent: str = "",
+                    latency_ms: float | None = None,
+                    status_code: int | None = None) -> int:
         with self._lock:
-            self._con.execute(
+            cur = self._con.execute(
                 "INSERT INTO calls (ts,provider,model,source,source_tag,"
                 "input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,"
-                "cost_usd,endpoint,request_hash,user_agent) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "cost_usd,endpoint,request_hash,user_agent,latency_ms,status_code)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ts, provider, model, source, source_tag,
                  input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-                 cost_usd, endpoint, request_hash, user_agent),
+                 cost_usd, endpoint, request_hash, user_agent, latency_ms, status_code),
             )
+            row_id = cur.lastrowid
             self._con.commit()
+        return row_id
 
     def raw_calls_last_24h(self) -> int:
         day_start = int(time.time()) - 86400
@@ -313,6 +340,15 @@ class UsageStore:
             self._con.execute("DELETE FROM settings WHERE key = ?", (key,))
             self._con.commit()
 
+    def get_settings_by_prefix(self, prefix: str) -> list[dict]:
+        """Return all settings whose key starts with the given prefix."""
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT key, value, updated_at FROM settings WHERE key LIKE ?",
+                (prefix + "%",),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # ------------------------------------------------------------------
     # Spend helpers (for alerts + budget caps)
     # ------------------------------------------------------------------
@@ -349,6 +385,38 @@ class UsageStore:
             ).fetchone()
         return (agg[0] or 0.0) + (live[0] or 0.0)
 
+    def daily_spend_by_source(self, source: str) -> float:
+        """Total cost_usd for today filtered by source."""
+        today = date.today().isoformat()
+        with self._lock:
+            agg = self._con.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM daily_agg WHERE date = ? AND source = ?",
+                (today, source),
+            ).fetchone()
+            day_start = _date_to_ts(today)
+            live = self._con.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM calls WHERE ts >= ? AND source = ?",
+                (day_start, source),
+            ).fetchone()
+        return (agg[0] or 0.0) + (live[0] or 0.0)
+
+    def monthly_spend_by_source(self, source: str) -> float:
+        """Total cost_usd for the current calendar month filtered by source."""
+        today = date.today()
+        month_start = today.replace(day=1).isoformat()
+        today_str = today.isoformat()
+        with self._lock:
+            agg = self._con.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM daily_agg WHERE date >= ? AND date < ? AND source = ?",
+                (month_start, today_str, source),
+            ).fetchone()
+            day_start = _date_to_ts(today_str)
+            live = self._con.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) FROM calls WHERE ts >= ? AND source = ?",
+                (day_start, source),
+            ).fetchone()
+        return (agg[0] or 0.0) + (live[0] or 0.0)
+
     # ------------------------------------------------------------------
     # Cache hit rate trend (Phase 3)
     # ------------------------------------------------------------------
@@ -381,6 +449,120 @@ class UsageStore:
         return result
 
     # ------------------------------------------------------------------
+    # Spend Forecasting (daily cost series)
+    # ------------------------------------------------------------------
+
+    def daily_cost_series(self, days: int) -> list[tuple[str, float]]:
+        """Return daily total cost for the last N days, sorted by date ASC.
+
+        Uses daily_agg for historical dates and raw calls for today's live data.
+        """
+        today = date.today()
+        since = (today - timedelta(days=days)).isoformat()
+        today_str = today.isoformat()
+
+        with self._lock:
+            rows = self._con.execute(
+                """SELECT date, SUM(cost_usd) as total_cost
+                   FROM daily_agg
+                   WHERE date >= ? AND date < ?
+                   GROUP BY date
+                   ORDER BY date""",
+                (since, today_str),
+            ).fetchall()
+
+            day_start = _date_to_ts(today_str)
+            live = self._con.execute(
+                """SELECT COALESCE(SUM(cost_usd), 0) as total_cost
+                   FROM calls WHERE ts >= ?""",
+                (day_start,),
+            ).fetchone()
+
+        result = [(row["date"], row["total_cost"]) for row in rows]
+
+        live_cost = live["total_cost"] if live else 0.0
+        if live_cost > 0:
+            result.append((today_str, live_cost))
+
+        result.sort(key=lambda x: x[0])
+        return result
+
+    # ------------------------------------------------------------------
+    # Cost Allocation Tags
+    # ------------------------------------------------------------------
+
+    def query_by_tag(self, days: int) -> list[dict]:
+        """Return usage grouped by source (tag) for the last N days.
+
+        Combines historical daily_agg with today's live raw calls,
+        then groups everything by source.
+        """
+        today = date.today().isoformat()
+        since = (date.today() - timedelta(days=days)).isoformat()
+
+        with self._lock:
+            agg_rows = self._con.execute(
+                """SELECT source,
+                   SUM(call_count) as call_count,
+                   SUM(input_tokens) as input_tokens,
+                   SUM(output_tokens) as output_tokens,
+                   SUM(cache_read_tokens) as cache_read_tokens,
+                   SUM(cache_write_tokens) as cache_write_tokens,
+                   SUM(cost_usd) as cost_usd
+                   FROM daily_agg WHERE date >= ? AND date < ?
+                   GROUP BY source""",
+                (since, today),
+            ).fetchall()
+
+            day_start = _date_to_ts(today)
+            live_rows = self._con.execute(
+                """SELECT source,
+                   COUNT(*) as call_count,
+                   COALESCE(SUM(input_tokens), 0) as input_tokens,
+                   COALESCE(SUM(output_tokens), 0) as output_tokens,
+                   COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                   COALESCE(SUM(cache_write_tokens), 0) as cache_write_tokens,
+                   COALESCE(SUM(cost_usd), 0) as cost_usd
+                   FROM calls WHERE ts >= ?
+                   GROUP BY source""",
+                (day_start,),
+            ).fetchall()
+
+        by_source: dict[str, dict] = {}
+        for row in agg_rows:
+            src = row["source"]
+            by_source[src] = {
+                "source": src,
+                "call_count": row["call_count"] or 0,
+                "input_tokens": row["input_tokens"] or 0,
+                "output_tokens": row["output_tokens"] or 0,
+                "cache_read_tokens": row["cache_read_tokens"] or 0,
+                "cache_write_tokens": row["cache_write_tokens"] or 0,
+                "cost_usd": row["cost_usd"] or 0.0,
+            }
+        for row in live_rows:
+            src = row["source"]
+            if src in by_source:
+                by_source[src]["call_count"] += row["call_count"] or 0
+                by_source[src]["input_tokens"] += row["input_tokens"] or 0
+                by_source[src]["output_tokens"] += row["output_tokens"] or 0
+                by_source[src]["cache_read_tokens"] += row["cache_read_tokens"] or 0
+                by_source[src]["cache_write_tokens"] += row["cache_write_tokens"] or 0
+                by_source[src]["cost_usd"] += row["cost_usd"] or 0.0
+            else:
+                by_source[src] = {
+                    "source": src,
+                    "call_count": row["call_count"] or 0,
+                    "input_tokens": row["input_tokens"] or 0,
+                    "output_tokens": row["output_tokens"] or 0,
+                    "cache_read_tokens": row["cache_read_tokens"] or 0,
+                    "cache_write_tokens": row["cache_write_tokens"] or 0,
+                    "cost_usd": row["cost_usd"] or 0.0,
+                }
+
+        return sorted(by_source.values(), key=lambda r: r["cost_usd"], reverse=True)
+
+    # ------------------------------------------------------------------
     # Raw calls for sessions (Phase 5)
     # ------------------------------------------------------------------
 
@@ -400,6 +582,199 @@ class UsageStore:
                 ).fetchall()
         return [dict(r) for r in rows]
 
+    # ------------------------------------------------------------------
+    # Provider Health (Latency/Status Tracking)
+    # ------------------------------------------------------------------
+
+    def provider_health(self, days: int = 1) -> list[dict[str, Any]]:
+        cutoff = int(time.time()) - days * 86400
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT provider, latency_ms, status_code FROM calls"
+                " WHERE ts >= ? AND latency_ms IS NOT NULL",
+                (cutoff,),
+            ).fetchall()
+        if not rows:
+            return []
+
+        by_provider: dict[str, list[dict]] = {}
+        for row in rows:
+            provider = row["provider"]
+            if provider not in by_provider:
+                by_provider[provider] = []
+            by_provider[provider].append(dict(row))
+
+        result: list[dict[str, Any]] = []
+        for provider, calls in sorted(by_provider.items()):
+            total = len(calls)
+            error_count = sum(
+                1 for c in calls
+                if c["status_code"] is not None and c["status_code"] >= 400
+            )
+            error_rate = error_count / total if total > 0 else 0.0
+            latencies = sorted(c["latency_ms"] for c in calls)
+            result.append({
+                "provider": provider,
+                "total_calls": total,
+                "error_count": error_count,
+                "error_rate": round(error_rate, 4),
+                "p50_ms": round(_percentile(latencies, 50), 1),
+                "p95_ms": round(_percentile(latencies, 95), 1),
+                "p99_ms": round(_percentile(latencies, 99), 1),
+            })
+        return result
+
+    # ------------------------------------------------------------------
+    # Rate Limit Tracking
+    # ------------------------------------------------------------------
+
+    def rate_limit_events(self, days: int = 1) -> list[dict]:
+        """Return 429 events grouped by provider and hour for the last N days."""
+        cutoff = int(time.time()) - days * 86400
+        with self._lock:
+            rows = self._con.execute(
+                """SELECT provider,
+                   (ts / 3600) * 3600 as hour_ts,
+                   COUNT(*) as count
+                   FROM calls
+                   WHERE status_code = 429 AND ts >= ?
+                   GROUP BY provider, hour_ts
+                   ORDER BY hour_ts ASC""",
+                (cutoff,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def rate_limit_summary(self, days: int = 1) -> list[dict]:
+        """Return per-provider 429 count and total calls for rate calculation."""
+        cutoff = int(time.time()) - days * 86400
+        with self._lock:
+            rows = self._con.execute(
+                """SELECT provider,
+                   SUM(CASE WHEN status_code = 429 THEN 1 ELSE 0 END) as rate_limit_count,
+                   COUNT(*) as total_calls
+                   FROM calls
+                   WHERE ts >= ?
+                   GROUP BY provider
+                   HAVING rate_limit_count > 0""",
+                (cutoff,),
+            ).fetchall()
+        return [
+            {
+                "provider": r["provider"],
+                "rate_limit_count": r["rate_limit_count"],
+                "total_calls": r["total_calls"],
+                "rate_limit_pct": (
+                    r["rate_limit_count"] / r["total_calls"] * 100
+                    if r["total_calls"] > 0
+                    else 0.0
+                ),
+            }
+            for r in rows
+        ]
+
+    # ------------------------------------------------------------------
+    # Request Deduplication (Response Cache)
+    # ------------------------------------------------------------------
+
+    def get_cached_response(self, request_hash: str) -> dict[str, Any] | None:
+        """Return cached response if it exists and has not expired, else None."""
+        now = int(time.time())
+        with self._lock:
+            row = self._con.execute(
+                "SELECT * FROM response_cache WHERE request_hash = ?",
+                (request_hash,),
+            ).fetchone()
+        if row is None:
+            return None
+        if row["cached_at"] + row["ttl_seconds"] <= now:
+            return None
+        return dict(row)
+
+    def set_cached_response(
+        self,
+        *,
+        request_hash: str,
+        response_body: bytes,
+        response_status: int,
+        response_headers: str,
+        provider: str,
+        model: str,
+        ttl_seconds: int,
+    ) -> None:
+        with self._lock:
+            self._con.execute(
+                "INSERT OR REPLACE INTO response_cache "
+                "(request_hash, response_body, response_status, response_headers, "
+                "provider, model, cached_at, ttl_seconds) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    request_hash,
+                    response_body,
+                    response_status,
+                    response_headers,
+                    provider,
+                    model,
+                    int(time.time()),
+                    ttl_seconds,
+                ),
+            )
+            self._con.commit()
+
+    def purge_expired_cache(self) -> int:
+        """Delete expired response_cache entries, return count deleted."""
+        now = int(time.time())
+        with self._lock:
+            cursor = self._con.execute(
+                "DELETE FROM response_cache WHERE cached_at + ttl_seconds <= ?",
+                (now,),
+            )
+            self._con.commit()
+        return cursor.rowcount
+
+    # ------------------------------------------------------------------
+    # Request/Response Logging
+    # ------------------------------------------------------------------
+
+    def insert_request_log(
+        self,
+        *,
+        call_id: int,
+        ts: int,
+        request_body: str | None,
+        response_body: str | None,
+    ) -> None:
+        with self._lock:
+            self._con.execute(
+                "INSERT INTO request_log (call_id, ts, request_body, response_body) "
+                "VALUES (?, ?, ?, ?)",
+                (call_id, ts, request_body, response_body),
+            )
+            self._con.commit()
+
+    def get_request_logs(self, limit: int = 20) -> list[dict]:
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT r.id, r.call_id, r.ts, r.request_body, r.response_body, "
+                "c.provider, c.model, c.source, c.endpoint "
+                "FROM request_log r "
+                "LEFT JOIN calls c ON c.id = r.call_id "
+                "ORDER BY r.ts DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_request_log(self, log_id: int) -> dict | None:
+        with self._lock:
+            row = self._con.execute(
+                "SELECT r.id, r.call_id, r.ts, r.request_body, r.response_body, "
+                "c.provider, c.model, c.source, c.endpoint "
+                "FROM request_log r "
+                "LEFT JOIN calls c ON c.id = r.call_id "
+                "WHERE r.id = ?",
+                (log_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def close(self) -> None:
         self._con.close()
 
@@ -407,3 +782,18 @@ class UsageStore:
 def _date_to_ts(date_str: str) -> int:
     dt = datetime.strptime(date_str, "%Y-%m-%d")
     return int(dt.timestamp())
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float:
+    if not sorted_values:
+        return 0.0
+    n = len(sorted_values)
+    if n == 1:
+        return sorted_values[0]
+    k = (pct / 100) * (n - 1)
+    f = int(k)
+    c = f + 1
+    if c >= n:
+        return sorted_values[-1]
+    d = k - f
+    return sorted_values[f] + d * (sorted_values[c] - sorted_values[f])

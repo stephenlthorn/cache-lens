@@ -464,6 +464,7 @@ function initDashboard() {
   loadCacheTrend();
   loadSessions();
   loadBudgetStatus();
+  loadForecast();
   backfillLiveFeed();
   connectLiveFeed();
   setInterval(backfillLiveFeed, 10000);
@@ -494,7 +495,7 @@ async function loadKPIs() {
       if (kpiEl) kpiEl.textContent = fmtCost(data.total_cost_usd);
       const savEl = el(`kpi-savings-${p.days}`);
       if (savEl && typeof data.savings_usd === 'number' && data.savings_usd > 0) {
-        savEl.textContent = `saved ${fmtCost(data.savings_usd)}`;
+        savEl.textContent = `\u2714 saved ${fmtCost(data.savings_usd)}`;
       }
     } catch {
       const kpiEl = el(`kpi-${p.days}`);
@@ -546,20 +547,23 @@ function renderTokenChart(rows) {
         {
           label: 'Input',
           data: inputData,
-          backgroundColor: 'rgba(124,92,255,0.65)',
-          borderRadius: 4,
+          backgroundColor: 'rgba(139,92,246,0.6)',
+          borderRadius: 3,
+          borderSkipped: false,
         },
         {
           label: 'Cache Read',
           data: cacheData,
-          backgroundColor: 'rgba(46,233,166,0.65)',
-          borderRadius: 4,
+          backgroundColor: 'rgba(0,255,136,0.5)',
+          borderRadius: 3,
+          borderSkipped: false,
         },
         {
           label: 'Output',
           data: outputData,
-          backgroundColor: 'rgba(255,176,32,0.65)',
-          borderRadius: 4,
+          backgroundColor: 'rgba(245,158,11,0.5)',
+          borderRadius: 3,
+          borderSkipped: false,
         },
       ]
     },
@@ -568,18 +572,18 @@ function renderTokenChart(rows) {
       maintainAspectRatio: false,
       plugins: {
         legend: {
-          labels: { color: 'rgba(231,237,246,0.85)', font: { size: 12 } }
+          labels: { color: '#94a3b8', font: { size: 11 } }
         }
       },
       scales: {
         x: {
           stacked: false,
-          ticks: { color: 'rgba(154,167,184,0.9)', maxRotation: 45 },
-          grid: { color: 'rgba(255,255,255,0.06)' }
+          ticks: { color: '#64748b', maxRotation: 45, font: { size: 10 } },
+          grid: { color: 'rgba(255,255,255,0.03)' }
         },
         y: {
-          ticks: { color: 'rgba(154,167,184,0.9)' },
-          grid: { color: 'rgba(255,255,255,0.06)' }
+          ticks: { color: '#64748b', font: { size: 10 } },
+          grid: { color: 'rgba(255,255,255,0.04)' }
         }
       }
     }
@@ -660,10 +664,7 @@ function _callTs(call) {
 }
 
 function _liveFeedDebug(msg) {
-  const d = el('liveFeedDebug');
-  if (!d) return;
-  d.style.display = 'block';
-  d.textContent = msg;
+  // debug logging removed in v8 UI cleanup
 }
 
 async function backfillLiveFeed() {
@@ -1041,22 +1042,24 @@ async function loadCacheTrend() {
         datasets: [{
           label: 'Cache Hit %',
           data: data.map(d => d.cache_hit_pct),
-          borderColor: 'rgba(46,233,166,0.85)',
-          backgroundColor: 'rgba(46,233,166,0.15)',
+          borderColor: 'rgba(0,255,136,0.8)',
+          backgroundColor: 'rgba(0,255,136,0.08)',
           fill: true,
-          tension: 0.3,
-          pointRadius: 3,
+          tension: 0.4,
+          pointRadius: 2,
+          pointBackgroundColor: 'rgba(0,255,136,0.9)',
+          borderWidth: 2,
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { labels: { color: 'rgba(231,237,246,0.85)' } }
+          legend: { labels: { color: '#94a3b8', font: { size: 11 } } }
         },
         scales: {
-          x: { ticks: { color: 'rgba(154,167,184,0.9)', maxRotation: 45 }, grid: { color: 'rgba(255,255,255,0.06)' } },
-          y: { min: 0, max: 100, ticks: { color: 'rgba(154,167,184,0.9)', callback: v => v + '%' }, grid: { color: 'rgba(255,255,255,0.06)' } }
+          x: { ticks: { color: '#64748b', maxRotation: 45, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.03)' } },
+          y: { min: 0, max: 100, ticks: { color: '#64748b', font: { size: 10 }, callback: v => v + '%' }, grid: { color: 'rgba(255,255,255,0.04)' } }
         }
       }
     });
@@ -1129,6 +1132,47 @@ async function loadBudgetStatus() {
   } catch { /* silently fail */ }
 }
 
+// ─── Spend Forecast ─────────────────────────────────────────────────────────
+
+async function loadForecast() {
+  const container = el('forecast-content');
+  if (!container) return;
+  try {
+    const r = await fetch(apiUrl('/api/usage/forecast'));
+    if (!r.ok) { container.innerHTML = '<span class="muted">Unavailable</span>'; return; }
+    const data = await r.json();
+
+    const trendArrow = data.trend === 'increasing' ? '\u2191'
+      : data.trend === 'decreasing' ? '\u2193'
+      : '\u2192';
+    const trendColor = data.trend === 'increasing' ? '#ef4444'
+      : data.trend === 'decreasing' ? '#00ff88'
+      : '#64748b';
+    const confColor = data.confidence === 'high' ? '#00ff88'
+      : data.confidence === 'medium' ? '#f59e0b'
+      : '#64748b';
+
+    container.innerHTML = `
+      <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+        <span class="neon-value" style="font-size:1.8rem">
+          $${data.projected_monthly_usd.toFixed(2)}
+        </span>
+        <span style="font-size:1rem;color:${trendColor};font-weight:600;font-family:var(--mono)" title="Trend: ${data.trend}">
+          ${trendArrow} ${data.trend}
+        </span>
+        <span class="pill" style="background:${confColor}15;color:${confColor};border:1px solid ${confColor}30;font-family:var(--mono)">
+          ${data.confidence}
+        </span>
+      </div>
+      <div style="margin-top:10px;color:#64748b;font-size:12px;font-family:var(--mono)">
+        $${data.daily_avg_usd.toFixed(2)}/day &middot; ${data.days_remaining}d remaining
+      </div>
+    `;
+  } catch {
+    container.innerHTML = '<span class="muted">Failed to load forecast</span>';
+  }
+}
+
 // ─── Settings Panel ─────────────────────────────────────────────────────────
 
 const settingsToggle = el('settingsToggle');
@@ -1141,6 +1185,7 @@ if (settingsToggle && settingsPanel) {
     if (!settingsPanel.classList.contains('hidden')) {
       await loadAlertSettings();
       await loadBudgetSettings();
+      await loadPricingSettings();
     }
   });
 }
@@ -1203,6 +1248,66 @@ if (saveBudgetBtn) {
     saveBudgetBtn.textContent = 'Saved!';
     setTimeout(() => saveBudgetBtn.textContent = 'Save Budget', 1200);
     loadBudgetStatus();
+  });
+}
+
+// ─── Custom Pricing Settings ────────────────────────────────────────────────
+
+async function loadPricingSettings() {
+  try {
+    const r = await fetch(apiUrl('/api/settings/pricing'));
+    if (!r.ok) return;
+    const data = await r.json();
+    const tbody = el('pricingBody');
+    if (!tbody) return;
+
+    const models = data.models || {};
+    const defaultModels = ['anthropic/default', 'openai/default', 'google/default'];
+    const modelNames = Object.keys(models)
+      .filter(m => !defaultModels.includes(m))
+      .sort();
+
+    if (modelNames.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="table-empty">No models found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = modelNames.map(name => {
+      const rates = models[name];
+      return `<tr data-model="${name}">
+        <td><code>${name}</code></td>
+        <td><input type="number" class="filter-input pricing-input" data-field="input" step="0.01" min="0" value="${rates.input}" /></td>
+        <td><input type="number" class="filter-input pricing-input" data-field="output" step="0.01" min="0" value="${rates.output}" /></td>
+        <td><input type="number" class="filter-input pricing-input" data-field="cache_read" step="0.01" min="0" value="${rates.cache_read}" /></td>
+        <td><input type="number" class="filter-input pricing-input" data-field="cache_write" step="0.01" min="0" value="${rates.cache_write}" /></td>
+      </tr>`;
+    }).join('');
+  } catch { /* ignore */ }
+}
+
+const savePricingBtn = el('savePricing');
+if (savePricingBtn) {
+  savePricingBtn.addEventListener('click', async () => {
+    const tbody = el('pricingBody');
+    if (!tbody) return;
+    const overrides = {};
+    tbody.querySelectorAll('tr[data-model]').forEach(row => {
+      const model = row.dataset.model;
+      const inputs = row.querySelectorAll('.pricing-input');
+      const rates = {};
+      inputs.forEach(inp => {
+        const val = parseFloat(inp.value);
+        if (!isNaN(val)) rates[inp.dataset.field] = val;
+      });
+      if (Object.keys(rates).length > 0) overrides[model] = rates;
+    });
+    await fetch(apiUrl('/api/settings/pricing'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overrides }),
+    });
+    savePricingBtn.textContent = 'Saved!';
+    setTimeout(() => savePricingBtn.textContent = 'Save Pricing', 1200);
   });
 }
 
@@ -1277,11 +1382,111 @@ if (compareBtn) {
   });
 }
 
-// Populate model dropdowns when Deep Dive page loads
+// --- Cost Allocation Tags ---
+
+async function loadTagBreakdown() {
+  const tbody = el('tag-tbody');
+  if (!tbody) return;
+  try {
+    const r = await fetch(apiUrl('/api/usage/by-tag?days=30'));
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (!data || data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="table-empty">No tag data available.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.map(row => `
+      <tr>
+        <td>${escapeHtml(row.source || '—')}</td>
+        <td>${fmtInt(row.call_count)}</td>
+        <td>${fmtInt(row.input_tokens)}</td>
+        <td>${fmtInt(row.output_tokens)}</td>
+        <td>${fmtCost(row.cost_usd)}</td>
+      </tr>
+    `).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" class="table-empty">Failed: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+// ─── Token Cost Breakdown ─────────────────────────────────────────────────
+
+let tokenCostChartInstance = null;
+
+async function loadTokenCostBreakdown() {
+  try {
+    const r = await fetch(apiUrl('/api/usage/token-breakdown?days=30'));
+    if (!r.ok) return;
+    const { data } = await r.json();
+    if (!data || data.length === 0) return;
+
+    const labels = data.map(d => d.date);
+    const inputCosts = data.map(d => d.input_cost);
+    const outputCosts = data.map(d => d.output_cost);
+    const cacheReadCosts = data.map(d => d.cache_read_cost);
+    const cacheWriteCosts = data.map(d => d.cache_write_cost);
+
+    const canvas = el('tokenCostChart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    if (tokenCostChartInstance) tokenCostChartInstance.destroy();
+
+    tokenCostChartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Input',
+            data: inputCosts,
+            backgroundColor: 'rgba(139,92,246,0.7)',
+          },
+          {
+            label: 'Output',
+            data: outputCosts,
+            backgroundColor: 'rgba(0,255,136,0.5)',
+          },
+          {
+            label: 'Cache Read',
+            data: cacheReadCosts,
+            backgroundColor: 'rgba(245,158,11,0.5)',
+          },
+          {
+            label: 'Cache Write',
+            data: cacheWriteCosts,
+            backgroundColor: 'rgba(239,68,68,0.5)',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        scales: {
+          x: { stacked: true, ticks: { color: '#64748b', font: { size: 10 } }, grid: { display: false } },
+          y: { stacked: true, ticks: { color: '#64748b', font: { size: 10 }, callback: v => '$' + v.toFixed(2) }, grid: { color: 'rgba(255,255,255,0.03)' } },
+        },
+        plugins: {
+          legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(4)}`,
+            },
+          },
+        },
+      },
+    });
+  } catch (err) {
+    // silently fail — chart is supplementary
+  }
+}
+
+// Populate model dropdowns + tag breakdown + token cost breakdown when Deep Dive page loads
 const origLoadDeepDive = loadDeepDive;
 loadDeepDive = async function() {
   await origLoadDeepDive();
   populateModelDropdowns();
+  loadTagBreakdown();
+  loadTokenCostBreakdown();
 };
 
 // Start on dashboard — must be last so all let/const variables are initialized

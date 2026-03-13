@@ -596,6 +596,292 @@ def test_budget_status_endpoint(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
+# /api/usage/by-tag -- Cost Allocation Tags (Feature 2)
+# ---------------------------------------------------------------------------
+
+
+def test_by_tag_endpoint_empty(client: TestClient) -> None:
+    """GET /api/usage/by-tag returns empty list on empty store."""
+    response = client.get("/api/usage/by-tag")
+    assert response.status_code == 200
+    body = response.json()
+    assert body == []
+
+
+def test_by_tag_endpoint_with_data(
+    client: TestClient, test_store: UsageStore
+) -> None:
+    """GET /api/usage/by-tag returns grouped data by source."""
+    import time
+    from datetime import date, timedelta
+
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    test_store.upsert_daily_agg(
+        date=yesterday, provider="anthropic", model="claude-sonnet-4-6",
+        source="team-alpha", call_count=10, input_tokens=1000,
+        output_tokens=500, cache_read_tokens=200, cache_write_tokens=50,
+        cost_usd=0.10,
+    )
+    test_store.insert_call(
+        ts=int(time.time()), provider="anthropic", model="claude-sonnet-4-6",
+        source="team-beta", source_tag=None,
+        input_tokens=500, output_tokens=250,
+        cache_read_tokens=100, cache_write_tokens=25,
+        cost_usd=0.05, endpoint="/v1/messages", request_hash="sha256:tag-srv-1",
+    )
+    response = client.get("/api/usage/by-tag?days=30")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 2
+    by_source = {r["source"]: r for r in body}
+    assert "team-alpha" in by_source
+    assert "team-beta" in by_source
+    assert by_source["team-alpha"]["call_count"] == 10
+    assert by_source["team-beta"]["input_tokens"] == 500
+
+
+# ---------------------------------------------------------------------------
+# /api/usage/token-breakdown (Feature 4)
+# ---------------------------------------------------------------------------
+
+
+def test_token_breakdown_empty(client: TestClient) -> None:
+    """GET /api/usage/token-breakdown returns empty data array on empty store."""
+    response = client.get("/api/usage/token-breakdown")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["days"] == 30
+    assert body["data"] == []
+
+
+def test_token_breakdown_default_days(client: TestClient) -> None:
+    """GET /api/usage/token-breakdown without ?days defaults to 30."""
+    response = client.get("/api/usage/token-breakdown")
+    assert response.status_code == 200
+    assert response.json()["days"] == 30
+
+
+def test_token_breakdown_with_data(
+    client: TestClient, test_store: UsageStore, pricing: PricingTable
+) -> None:
+    """GET /api/usage/token-breakdown computes per-type costs from daily_agg rows."""
+    from datetime import date, timedelta
+
+    d = (date.today() - timedelta(days=1)).isoformat()
+    test_store.upsert_daily_agg(
+        date=d,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        source="app",
+        call_count=10,
+        input_tokens=100_000,
+        output_tokens=20_000,
+        cache_read_tokens=50_000,
+        cache_write_tokens=5_000,
+        cost_usd=0.50,
+    )
+    response = client.get("/api/usage/token-breakdown?days=30")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["data"]) >= 1
+
+    row = body["data"][0]
+    assert row["date"] == d
+    assert "input_cost" in row
+    assert "output_cost" in row
+    assert "cache_read_cost" in row
+    assert "cache_write_cost" in row
+    assert "total_cost" in row
+
+    rates = pricing._row("anthropic", "claude-sonnet-4-6")
+    expected_input = 100_000 * rates["input"] / 1_000_000
+    expected_output = 20_000 * rates["output"] / 1_000_000
+    expected_cache_read = 50_000 * rates["cache_read"] / 1_000_000
+    expected_cache_write = 5_000 * rates["cache_write"] / 1_000_000
+
+    assert abs(row["input_cost"] - expected_input) < 0.0001
+    assert abs(row["output_cost"] - expected_output) < 0.0001
+    assert abs(row["cache_read_cost"] - expected_cache_read) < 0.0001
+    assert abs(row["cache_write_cost"] - expected_cache_write) < 0.0001
+    assert abs(row["total_cost"] - (expected_input + expected_output + expected_cache_read + expected_cache_write)) < 0.0001
+
+
+def test_token_breakdown_includes_today(
+    client: TestClient, test_store: UsageStore
+) -> None:
+    """GET /api/usage/token-breakdown includes today's live calls."""
+    import time
+
+    test_store.insert_call(
+        ts=int(time.time()),
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        source="live-test",
+        source_tag=None,
+        input_tokens=10_000,
+        output_tokens=2_000,
+        cache_read_tokens=5_000,
+        cache_write_tokens=1_000,
+        cost_usd=0.05,
+        endpoint="/v1/messages",
+        request_hash="token-breakdown-live",
+    )
+    response = client.get("/api/usage/token-breakdown?days=30")
+    assert response.status_code == 200
+    body = response.json()
+
+    from datetime import date
+    today = date.today().isoformat()
+    today_rows = [r for r in body["data"] if r["date"] == today]
+    assert len(today_rows) == 1
+    assert today_rows[0]["input_cost"] > 0
+
+
+# ---------------------------------------------------------------------------
+# /api/settings/pricing (Custom Pricing Overrides)
+# ---------------------------------------------------------------------------
+
+
+def test_pricing_endpoint_get(client: TestClient) -> None:
+    """GET /api/settings/pricing returns model rates."""
+    response = client.get("/api/settings/pricing")
+    assert response.status_code == 200
+    body = response.json()
+    assert "models" in body
+    assert "claude-sonnet-4-6" in body["models"]
+    rates = body["models"]["claude-sonnet-4-6"]
+    assert "input" in rates
+    assert "output" in rates
+    assert "cache_read" in rates
+    assert "cache_write" in rates
+
+
+def test_pricing_endpoint_put(client: TestClient) -> None:
+    """PUT /api/settings/pricing updates model rates."""
+    response = client.put("/api/settings/pricing", json={
+        "overrides": {
+            "claude-sonnet-4-6": {"input": 50.0},
+        },
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+    get_resp = client.get("/api/settings/pricing")
+    body = get_resp.json()
+    assert body["models"]["claude-sonnet-4-6"]["input"] == 50.0
+
+
+def test_pricing_override_persists_across_requests(client: TestClient) -> None:
+    """After PUT, subsequent GET reflects the overridden pricing."""
+    client.put("/api/settings/pricing", json={
+        "overrides": {
+            "gpt-4o": {"output": 99.0, "cache_read": 5.0},
+        },
+    })
+    resp1 = client.get("/api/settings/pricing")
+    assert resp1.json()["models"]["gpt-4o"]["output"] == 99.0
+    assert resp1.json()["models"]["gpt-4o"]["cache_read"] == 5.0
+
+    resp2 = client.get("/api/settings/pricing")
+    assert resp2.json()["models"]["gpt-4o"]["output"] == 99.0
+    assert resp2.json()["models"]["gpt-4o"]["cache_read"] == 5.0
+
+
+# ---------------------------------------------------------------------------
+# /api/usage/provider-health (Feature 5)
+# ---------------------------------------------------------------------------
+
+
+def test_provider_health_endpoint_empty(client: TestClient) -> None:
+    """GET /api/usage/provider-health returns empty array on empty store."""
+    response = client.get("/api/usage/provider-health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body == []
+
+
+def test_provider_health_endpoint_with_data(
+    client: TestClient, test_store: UsageStore
+) -> None:
+    """GET /api/usage/provider-health returns correct shape with data."""
+    import time
+    now = int(time.time())
+    for i in range(5):
+        test_store.insert_call(
+            ts=now - i,
+            provider="anthropic", model="claude-sonnet-4-6",
+            source="test", source_tag=None,
+            input_tokens=100, output_tokens=50,
+            cache_read_tokens=0, cache_write_tokens=0,
+            cost_usd=0.01, endpoint="/v1/messages",
+            request_hash=f"sha256:health-{i}",
+            latency_ms=50.0 + i * 10, status_code=200,
+        )
+    response = client.get("/api/usage/provider-health?days=1")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    row = body[0]
+    assert row["provider"] == "anthropic"
+    assert row["total_calls"] == 5
+    assert row["error_count"] == 0
+    assert "p50_ms" in row
+    assert "p95_ms" in row
+    assert "p99_ms" in row
+    assert "error_rate" in row
+
+
+# ---------------------------------------------------------------------------
+# /api/usage/rate-limits (Feature 7)
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limits_endpoint_empty(client: TestClient) -> None:
+    """GET /api/usage/rate-limits returns empty summary and timeline on empty store."""
+    response = client.get("/api/usage/rate-limits")
+    assert response.status_code == 200
+    body = response.json()
+    assert "summary" in body
+    assert "timeline" in body
+    assert body["summary"] == []
+    assert body["timeline"] == []
+
+
+def test_rate_limits_endpoint_with_data(
+    client: TestClient, test_store: UsageStore
+) -> None:
+    """GET /api/usage/rate-limits returns correct shape with 429 data."""
+    import time
+    now = int(time.time())
+    test_store.insert_call(
+        ts=now, provider="anthropic", model="claude-sonnet-4-6",
+        source="test", source_tag=None, input_tokens=100, output_tokens=50,
+        cache_read_tokens=0, cache_write_tokens=0, cost_usd=0.001,
+        endpoint="/v1/messages", request_hash="sha256:rl-srv-1",
+        status_code=429,
+    )
+    test_store.insert_call(
+        ts=now + 1, provider="anthropic", model="claude-sonnet-4-6",
+        source="test", source_tag=None, input_tokens=100, output_tokens=50,
+        cache_read_tokens=0, cache_write_tokens=0, cost_usd=0.001,
+        endpoint="/v1/messages", request_hash="sha256:rl-srv-2",
+        status_code=200,
+    )
+    response = client.get("/api/usage/rate-limits?days=1")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["summary"]) == 1
+    assert body["summary"][0]["provider"] == "anthropic"
+    assert body["summary"][0]["rate_limit_count"] == 1
+    assert body["summary"][0]["total_calls"] == 2
+    assert "rate_limit_pct" in body["summary"][0]
+    assert len(body["timeline"]) >= 1
+    assert "provider" in body["timeline"][0]
+    assert "hour_ts" in body["timeline"][0]
+    assert "count" in body["timeline"][0]
+
+
+# ---------------------------------------------------------------------------
 # Proxy routes
 # ---------------------------------------------------------------------------
 

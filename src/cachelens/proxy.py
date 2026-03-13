@@ -304,7 +304,7 @@ def _filter_response_headers(headers: dict[str, str]) -> dict[str, str]:
     httpx automatically decompresses gzip/deflate/br responses, so the body
     we forward is already decompressed.  Keeping the original
     ``content-encoding`` header causes downstream clients (e.g. Claude) to
-    attempt a second decompression → zlib error.  ``content-length`` is also
+    attempt a second decompression -> zlib error.  ``content-length`` is also
     stripped because the decompressed size differs from the original.
     """
     return {
@@ -394,6 +394,22 @@ async def handle_proxy_request(
     else:
         streaming = is_streaming_request(body, parsed.provider)
 
+    # Request deduplication (non-streaming only)
+    dedup_enabled = (
+        not streaming
+        and store.get_setting("dedup.enabled") == "true"
+    )
+    if dedup_enabled:
+        cached = store.get_cached_response(request_hash)
+        if cached is not None:
+            cached_headers = json.loads(cached["response_headers"])
+            cached_headers["X-CacheLens-Cache"] = "HIT"
+            return Response(
+                content=cached["response_body"],
+                status_code=cached["response_status"],
+                headers=cached_headers,
+            )
+
     if streaming:
         return _UpstreamStreamResponse(
             method=method,
@@ -423,6 +439,7 @@ async def handle_proxy_request(
                 pricing=pricing,
                 on_call_recorded=on_call_recorded,
                 user_agent=user_agent,
+                dedup_enabled=dedup_enabled,
             )
 
 
@@ -530,8 +547,11 @@ async def _handle_non_streaming(
     pricing: PricingTable,
     on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
     user_agent: str = "",
+    dedup_enabled: bool = False,
 ) -> Response:
+    t0 = time.time()
     response = await client.request(method, url, headers=headers, content=body)
+    latency_ms = (time.time() - t0) * 1000
     response_body = response.content
     response_headers = _filter_response_headers(dict(response.headers))
 
@@ -546,9 +566,37 @@ async def _handle_non_streaming(
                 request_hash=request_hash,
                 usage=usage,
                 user_agent=user_agent,
+                latency_ms=latency_ms,
+                status_code=response.status_code,
             )
             if on_call_recorded is not None:
                 await on_call_recorded(event)
+
+        # Cache the response if dedup is enabled
+        if dedup_enabled and usage is not None:
+            store.set_cached_response(
+                request_hash=request_hash,
+                response_body=response_body,
+                response_status=response.status_code,
+                response_headers=json.dumps(dict(response_headers)),
+                provider=parsed.provider,
+                model=usage.get("model", "unknown"),
+                ttl_seconds=300,
+            )
+    else:
+        # Record non-success calls for latency/status tracking
+        _record_call(
+            store=store,
+            pricing=pricing,
+            parsed=parsed,
+            endpoint=endpoint,
+            request_hash=request_hash,
+            usage={"model": "unknown", "input_tokens": 0, "output_tokens": 0,
+                   "cache_read_tokens": 0, "cache_write_tokens": 0},
+            user_agent=user_agent,
+            latency_ms=latency_ms,
+            status_code=response.status_code,
+        )
 
     return Response(
         content=response_body,
@@ -570,6 +618,8 @@ def _record_call(
     request_hash: str,
     usage: dict,
     user_agent: str = "",
+    latency_ms: float | None = None,
+    status_code: int | None = None,
 ) -> dict:
     """Record call in store and return event dict for WebSocket broadcast."""
     model = usage.get("model") or "unknown"
@@ -602,6 +652,8 @@ def _record_call(
         endpoint=endpoint,
         request_hash=request_hash,
         user_agent=user_agent,
+        latency_ms=latency_ms,
+        status_code=status_code,
     )
 
     return {

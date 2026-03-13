@@ -41,6 +41,25 @@ class PricingTable:
             except Exception as e:
                 logger.warning("Skipping malformed pricing override for %r: %s", model, e)
 
+    def get_all_prices(self) -> dict[str, dict[str, float]]:
+        """Return a copy of the full prices dict."""
+        return {k: dict(v) for k, v in self._prices.items()}
+
+    def apply_overrides_from_dict(self, overrides: dict[str, dict[str, float]]) -> None:
+        """Update _prices in-place with per-model rate overrides.
+
+        Each key is a model name, value is a dict with optional keys:
+        input, output, cache_read, cache_write (rates per million tokens).
+        Only provided keys are overridden; others are preserved.
+        """
+        valid_keys = {"input", "output", "cache_read", "cache_write"}
+        for model, rates in overrides.items():
+            if model not in self._prices:
+                self._prices[model] = {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0}
+            for key, value in rates.items():
+                if key in valid_keys:
+                    self._prices[model][key] = float(value)
+
     def _row(self, provider: str, model: str) -> dict[str, float]:
         return (
             self._prices.get(model)

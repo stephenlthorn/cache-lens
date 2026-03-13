@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -19,12 +20,14 @@ from pydantic import BaseModel, Field
 
 from .aggregator import schedule_rollups
 from .engine.analyzer import analyze
+from .forecast import compute_forecast
 from .parser import parse_input
 from .pricing import PricingTable
 from .proxy import handle_proxy_request
 from .recommender import generate_recommendations
 from .sessions import detect_sessions
 from .store import UsageStore
+from .webhooks import dispatch_webhook, should_fire_webhook
 
 # Default DB path used when no store is injected (production mode)
 DEFAULT_DB_PATH: Path = Path.home() / ".cachelens" / "usage.db"
@@ -68,6 +71,9 @@ async def _lifespan(
     app.state.store = store
     app.state.pricing = pricing
     app.state.ws_clients = set()
+    overrides_str = store.get_setting("pricing.overrides")
+    if overrides_str:
+        pricing.apply_overrides_from_dict(json.loads(overrides_str))
     tasks = schedule_rollups(store)
     try:
         yield
@@ -492,6 +498,65 @@ def create_app(
             "total_output_tokens": total_output,
         })
 
+    # --- Token Cost Breakdown ---
+
+    @app.get("/api/usage/token-breakdown")
+    def api_token_breakdown(request: Request, days: int = 30) -> JSONResponse:
+        if days not in _VALID_DAYS:
+            days = 30
+        s: UsageStore = request.app.state.store
+        p: PricingTable = request.app.state.pricing
+        since = (date.today() - timedelta(days=days)).isoformat()
+        rows = s.query_daily_agg_since(since)
+
+        today = date.today().isoformat()
+        today_in_agg = {(r["provider"], r["model"], r["source"]) for r in rows if r["date"] == today}
+        for r in s.aggregate_calls_for_date(today):
+            if (r["provider"], r["model"], r["source"]) not in today_in_agg:
+                rows.append({
+                    "date": today,
+                    "provider": r["provider"],
+                    "model": r["model"],
+                    "source": r["source"],
+                    "call_count": r["call_count"],
+                    "input_tokens": r["input_tokens"],
+                    "output_tokens": r["output_tokens"],
+                    "cache_read_tokens": r["cache_read_tokens"],
+                    "cache_write_tokens": r["cache_write_tokens"],
+                    "cost_usd": r["cost_usd"],
+                })
+
+        by_date: dict[str, dict[str, float]] = {}
+        for r in rows:
+            d = r["date"]
+            if d not in by_date:
+                by_date[d] = {
+                    "input_cost": 0.0,
+                    "output_cost": 0.0,
+                    "cache_read_cost": 0.0,
+                    "cache_write_cost": 0.0,
+                }
+            rates = p._row(r["provider"], r["model"])
+            by_date[d]["input_cost"] += (r["input_tokens"] or 0) * rates["input"] / 1_000_000
+            by_date[d]["output_cost"] += (r["output_tokens"] or 0) * rates["output"] / 1_000_000
+            by_date[d]["cache_read_cost"] += (r["cache_read_tokens"] or 0) * rates["cache_read"] / 1_000_000
+            by_date[d]["cache_write_cost"] += (r["cache_write_tokens"] or 0) * rates["cache_write"] / 1_000_000
+
+        data = []
+        for d in sorted(by_date.keys()):
+            entry = by_date[d]
+            total = entry["input_cost"] + entry["output_cost"] + entry["cache_read_cost"] + entry["cache_write_cost"]
+            data.append({
+                "date": d,
+                "input_cost": round(entry["input_cost"], 6),
+                "output_cost": round(entry["output_cost"], 6),
+                "cache_read_cost": round(entry["cache_read_cost"], 6),
+                "cache_write_cost": round(entry["cache_write_cost"], 6),
+                "total_cost": round(total, 6),
+            })
+
+        return JSONResponse(content={"days": days, "data": data})
+
     # ------------------------------------------------------------------
     # Sessions (Phase 5)
     # ------------------------------------------------------------------
@@ -576,6 +641,24 @@ def create_app(
             s.set_setting("budget.enabled", "true" if body["enabled"] else "false")
         return JSONResponse(content={"status": "ok"})
 
+    # --- Custom Pricing ---
+
+    @app.get("/api/settings/pricing")
+    def api_get_pricing(request: Request) -> JSONResponse:
+        p: PricingTable = request.app.state.pricing
+        return JSONResponse(content={"models": p.get_all_prices()})
+
+    @app.put("/api/settings/pricing")
+    async def api_set_pricing(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        p: PricingTable = request.app.state.pricing
+        body = await request.json()
+        overrides = body.get("overrides", {})
+        if overrides:
+            s.set_setting("pricing.overrides", json.dumps(overrides))
+            p.apply_overrides_from_dict(overrides)
+        return JSONResponse(content={"status": "ok"})
+
     @app.get("/api/usage/budget-status")
     def api_budget_status(request: Request) -> JSONResponse:
         s: UsageStore = request.app.state.store
@@ -589,6 +672,124 @@ def create_app(
             "daily_limit_usd": float(daily_limit) if daily_limit else None,
             "monthly_limit_usd": float(monthly_limit) if monthly_limit else None,
         })
+
+    # --- Spend Forecasting ---
+
+    @app.get("/api/usage/forecast")
+    def api_forecast(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        series = s.daily_cost_series(90)
+        forecast = compute_forecast(series)
+        return JSONResponse(content=forecast)
+
+    # --- Cost Allocation Tags ---
+
+    @app.get("/api/usage/by-tag")
+    def api_usage_by_tag(request: Request, days: int = 30) -> JSONResponse:
+        if days not in _VALID_DAYS:
+            days = 30
+        s: UsageStore = request.app.state.store
+        return JSONResponse(content=s.query_by_tag(days))
+
+    # --- Provider Health (Latency/Status Tracking) ---
+
+    @app.get("/api/usage/provider-health")
+    def api_provider_health(request: Request, days: int = 1) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        return JSONResponse(content=s.provider_health(days=days))
+
+    # --- Rate Limit Tracking ---
+
+    @app.get("/api/usage/rate-limits")
+    def api_rate_limits(request: Request, days: int = 1) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        return JSONResponse(content={
+            "summary": s.rate_limit_summary(days=days),
+            "timeline": s.rate_limit_events(days=days),
+        })
+
+    # --- Webhook Notifications ---
+
+    @app.get("/api/settings/webhooks")
+    def api_get_webhooks(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        url = s.get_setting("webhook.url")
+        events = s.get_setting("webhook.events")
+        enabled = s.get_setting("webhook.enabled")
+        return JSONResponse(content={
+            "url": url,
+            "events": events,
+            "enabled": enabled == "true" if enabled else False,
+        })
+
+    @app.put("/api/settings/webhooks")
+    async def api_set_webhooks(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        body = await request.json()
+        if "url" in body:
+            val = body["url"]
+            if val is not None:
+                s.set_setting("webhook.url", str(val))
+            else:
+                s.delete_setting("webhook.url")
+        if "events" in body:
+            val = body["events"]
+            if val is not None:
+                s.set_setting("webhook.events", str(val))
+            else:
+                s.delete_setting("webhook.events")
+        if "enabled" in body:
+            s.set_setting("webhook.enabled", "true" if body["enabled"] else "false")
+        return JSONResponse(content={"status": "ok"})
+
+    # --- Request/Response Logging ---
+
+    @app.get("/api/logs")
+    def api_logs(request: Request, limit: int = 20) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        logs = s.get_request_logs(limit=min(limit, 200))
+        result = [
+            {
+                "id": log["id"],
+                "call_id": log["call_id"],
+                "ts": log["ts"],
+                "provider": log.get("provider"),
+                "model": log.get("model"),
+                "source": log.get("source"),
+                "endpoint": log.get("endpoint"),
+            }
+            for log in logs
+        ]
+        return JSONResponse(content={"logs": result})
+
+    @app.get("/api/logs/{log_id}")
+    def api_log_detail(log_id: int, request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        log = s.get_request_log(log_id)
+        if log is None:
+            return JSONResponse(status_code=404, content={"error": "log not found"})
+        return JSONResponse(content={
+            "id": log["id"],
+            "call_id": log["call_id"],
+            "ts": log["ts"],
+            "provider": log.get("provider"),
+            "model": log.get("model"),
+            "source": log.get("source"),
+            "endpoint": log.get("endpoint"),
+            "request_body": log.get("request_body"),
+            "response_body": log.get("response_body"),
+        })
+
+    # --- Prometheus Metrics ---
+
+    @app.get("/metrics")
+    def api_metrics(request: Request) -> Response:
+        from cachelens.metrics import render_prometheus_metrics
+        s: UsageStore = request.app.state.store
+        return Response(
+            content=render_prometheus_metrics(s),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     # ------------------------------------------------------------------
     # WebSocket live feed
@@ -639,6 +840,7 @@ def create_app(
             store = request.app.state.store
             threshold_str = store.get_setting("alerts.daily_cost_threshold")
             alerts_enabled = store.get_setting("alerts.enabled") == "true"
+            cost_alert_fired = False
             if alerts_enabled and threshold_str:
                 threshold = float(threshold_str)
                 daily_cost = store.daily_spend_usd()
@@ -648,6 +850,7 @@ def create_app(
                         request.app.state._alert_cooldown = set()
                     if alert_key not in request.app.state._alert_cooldown:
                         request.app.state._alert_cooldown.add(alert_key)
+                        cost_alert_fired = True
                         alert_event = {
                             "type": "cost_alert",
                             "daily_cost_usd": round(daily_cost, 4),
@@ -659,6 +862,20 @@ def create_app(
                                 await ws.send_json(alert_event)
                             except Exception:
                                 pass
+
+            # Webhook dispatch
+            webhook_url = store.get_setting("webhook.url")
+            webhook_enabled = store.get_setting("webhook.enabled")
+            webhook_events = store.get_setting("webhook.events") or ""
+            if webhook_url and webhook_enabled == "true":
+                if should_fire_webhook("call_recorded", webhook_events):
+                    asyncio.create_task(dispatch_webhook(
+                        webhook_url, {"type": "call_recorded", **event},
+                    ))
+                if cost_alert_fired and should_fire_webhook("cost_alert", webhook_events):
+                    asyncio.create_task(dispatch_webhook(
+                        webhook_url, alert_event,
+                    ))
 
         return await handle_proxy_request(
             method=request.method,
