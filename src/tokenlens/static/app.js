@@ -454,9 +454,7 @@ let tokenChart = null;
 let dashboardInitialized = false;
 let currentChartRange = 30;
 
-function initDashboard() {
-  if (dashboardInitialized) return;
-  dashboardInitialized = true;
+function refreshDashboard() {
   loadKPIs();
   loadTokenChart(currentChartRange);
   loadProviderBreakdown();
@@ -465,9 +463,16 @@ function initDashboard() {
   loadSessions();
   loadBudgetStatus();
   loadForecast();
+}
+
+function initDashboard() {
+  if (dashboardInitialized) return;
+  dashboardInitialized = true;
+  refreshDashboard();
   backfillLiveFeed();
   connectLiveFeed();
   setInterval(backfillLiveFeed, 10000);
+  setInterval(refreshDashboard, 60000);
 
   document.querySelectorAll('#chartToggle .tab').forEach(btn => {
     btn.addEventListener('click', () => {
