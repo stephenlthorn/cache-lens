@@ -81,7 +81,7 @@ function fmtInt(n) {
 
 function fmtCost(n) {
   if (typeof n !== 'number') return '—';
-  return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
 }
 
 function clamp(n, a, b) { return Math.min(b, Math.max(a, n)); }
@@ -491,15 +491,18 @@ async function loadKPIs() {
       const r = await fetch(apiUrl(`/api/usage/kpi?days=${p.days}`));
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
-      const kpiEl = el(`kpi-${p.days}`);
-      if (kpiEl) kpiEl.textContent = fmtCost(data.total_cost_usd);
       const savEl = el(`kpi-savings-${p.days}`);
-      if (savEl && typeof data.savings_usd === 'number' && data.savings_usd > 0) {
-        savEl.textContent = `\u2714 saved ${fmtCost(data.savings_usd)}`;
+      if (savEl) {
+        const saved = typeof data.savings_usd === 'number' ? data.savings_usd : 0;
+        savEl.textContent = `$${saved.toFixed(2)}`;
       }
+      const spentEl = el(`kpi-${p.days}`);
+      if (spentEl) spentEl.textContent = `Spent: $${(data.total_cost_usd || 0).toFixed(2)}`;
     } catch {
-      const kpiEl = el(`kpi-${p.days}`);
-      if (kpiEl) kpiEl.textContent = '—';
+      const savEl = el(`kpi-savings-${p.days}`);
+      if (savEl) savEl.textContent = '—';
+      const spentEl = el(`kpi-${p.days}`);
+      if (spentEl) spentEl.textContent = '';
     }
   }
 }
