@@ -9,6 +9,8 @@ CacheLens is a transparent proxy + dashboard that tracks every AI API call, show
 - **Real-time** — live WebSocket feed of every API call
 - **Works with** Anthropic, OpenAI, and Google AI
 
+![CacheLens Dashboard](docs/dashboard.png)
+
 ---
 
 ## Quick Start
