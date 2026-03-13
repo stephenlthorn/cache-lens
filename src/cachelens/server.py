@@ -730,6 +730,11 @@ def create_app(
         s: UsageStore = request.app.state.store
         return JSONResponse(content=s.conversation_efficiency(days=days))
 
+    @app.get("/api/usage/token-heatmap")
+    def api_token_heatmap(request: Request, days: int = 30) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        return JSONResponse(content=s.token_heatmap_summary(days=days))
+
     # --- Webhook Notifications ---
 
     @app.get("/api/settings/webhooks")

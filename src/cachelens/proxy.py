@@ -15,6 +15,7 @@ import httpx
 from fastapi.responses import Response
 
 from cachelens.detector import ParsedProxy, parse_proxy_path
+from cachelens.heatmap import compute_heatmap
 from cachelens.pricing import PricingTable
 from cachelens.store import UsageStore
 from cachelens.waste_detector import detect_waste, WasteItem
@@ -450,6 +451,17 @@ async def handle_proxy_request(
                     except Exception:
                         pass
 
+    # Compute token heatmap from request messages
+    _token_heatmap_json: str | None = None
+    if parsed_body is not None:
+        try:
+            messages = parsed_body.get("messages") or []
+            tools = parsed_body.get("tools")
+            hm = compute_heatmap(messages=messages, tools=tools, provider=parsed.provider)
+            _token_heatmap_json = json.dumps(hm)
+        except Exception:
+            pass
+
     # Determine streaming: Google uses path (streamGenerateContent), others use body
     if parsed.provider == "google":
         streaming = "streamGenerateContent" in parsed.upstream_path
@@ -493,6 +505,7 @@ async def handle_proxy_request(
             _message_count=_message_count,
             _history_tokens=_history_tokens,
             _history_ratio=_history_ratio,
+            _token_heatmap=_token_heatmap_json,
         )
     else:
         async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
@@ -516,6 +529,7 @@ async def handle_proxy_request(
                 _message_count=_message_count,
                 _history_tokens=_history_tokens,
                 _history_ratio=_history_ratio,
+                _token_heatmap=_token_heatmap_json,
             )
 
 

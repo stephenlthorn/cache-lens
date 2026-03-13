@@ -897,6 +897,45 @@ class UsageStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def token_heatmap_summary(self, days: int = 30) -> list[dict]:
+        """Aggregated average heatmap per source+model."""
+        cutoff = int(time.time()) - days * 86400
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT source, model, token_heatmap FROM calls"
+                " WHERE ts >= ? AND token_heatmap IS NOT NULL",
+                (cutoff,)
+            ).fetchall()
+
+        # Aggregate by source+model
+        agg: dict[tuple, dict] = {}
+        counts: dict[tuple, int] = {}
+        sections = ["system_prompt", "tool_definitions", "context",
+                    "conversation_history", "user_query", "other"]
+
+        import json as _json
+        for row in rows:
+            key = (row["source"], row["model"])
+            try:
+                hm = _json.loads(row["token_heatmap"])
+            except Exception:
+                continue
+            if key not in agg:
+                agg[key] = {s: 0.0 for s in sections}
+                counts[key] = 0
+            counts[key] += 1
+            for s in sections:
+                agg[key][s] += hm.get(s, 0)
+
+        result = []
+        for (source, model), totals in agg.items():
+            n = counts[(source, model)]
+            avg = {s: round(totals[s] / n) for s in sections}
+            avg["total"] = sum(avg[s] for s in sections)
+            result.append({"source": source, "model": model, "call_count": n, **avg})
+
+        return sorted(result, key=lambda x: -x["total"])
+
     def close(self) -> None:
         self._con.close()
 
