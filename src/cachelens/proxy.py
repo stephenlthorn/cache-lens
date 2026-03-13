@@ -17,7 +17,7 @@ from fastapi.responses import Response
 from cachelens.detector import ParsedProxy, parse_proxy_path
 from cachelens.pricing import PricingTable
 from cachelens.store import UsageStore
-from cachelens.waste_detector import detect_waste
+from cachelens.waste_detector import detect_waste, WasteItem
 
 # ---------------------------------------------------------------------------
 # Provider base URLs
@@ -485,7 +485,7 @@ class _UpstreamStreamResponse(Response):
         on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
         user_agent: str = "",
         parsed_body: dict | None = None,
-        _waste_items: list[dict] | None = None,
+        _waste_items: list[WasteItem] | None = None,
         _max_tokens_requested: int | None = None,
         _message_count: int | None = None,
         _history_tokens: int | None = None,
@@ -589,7 +589,7 @@ async def _handle_non_streaming(
     user_agent: str = "",
     dedup_enabled: bool = False,
     parsed_body: dict | None = None,
-    _waste_items: list[dict] | None = None,
+    _waste_items: list[WasteItem] | None = None,
     _max_tokens_requested: int | None = None,
     _message_count: int | None = None,
     _history_tokens: int | None = None,
