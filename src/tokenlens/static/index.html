@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TokenLens</title>
   <meta name="color-scheme" content="dark" />
-  <link rel="stylesheet" href="/static/style.css?v=10" />
+  <link rel="stylesheet" href="/static/style.css?v=11" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -127,142 +127,172 @@
     <!-- PAGE: Dashboard -->
     <div id="page-dashboard" class="page-content">
 
-      <!-- Claude billing explainer -->
-      <div class="cache-explainer">
-        <strong>How Claude billing works — every API call has 4 token types:</strong>
-        <div class="ce-row">
-          <span class="ce-chip"><span class="ce-dot" style="background:rgba(124,92,255,1)"></span> <strong>Fresh Input</strong> — new tokens your app sends this turn. Full price.</span>
-          <span class="ce-chip"><span class="ce-dot" style="background:rgba(255,176,32,1)"></span> <strong>Cache Write</strong> — context written to cache for the first time. 1.25× price, one-time cost.</span>
-          <span class="ce-chip"><span class="ce-dot" style="background:rgba(46,233,166,1)"></span> <strong>Cache Read</strong> — context retrieved from cache. Only 0.1× price — 10× cheaper.</span>
-          <span class="ce-chip"><span class="ce-dot" style="background:rgba(100,160,255,1)"></span> <strong>Output</strong> — tokens Claude generates. Full price.</span>
-        </div>
-        Claude Code caches your entire system prompt + conversation history, so each turn only sends a few fresh tokens — everything else is a cheap cache read.
-      </div>
-
-      <!-- Token Anatomy -->
-      <div class="token-anatomy">
-        <div class="token-anatomy__header">
-          <h3>Token Breakdown</h3>
-          <div class="ta-period-tabs" id="taPeriodTabs">
-            <button class="tab" data-days="1">Today</button>
-            <button class="tab tab--active" data-days="7">7d</button>
-            <button class="tab" data-days="30">30d</button>
-            <button class="tab" data-days="365">365d</button>
-          </div>
-        </div>
-        <div class="token-boxes">
-          <div class="token-box token-box--fresh">
-            <div class="tb-label">Fresh Input</div>
-            <div class="tb-desc">New tokens sent this turn — not cached</div>
-            <div class="tb-tokens" id="ta-fresh-tokens">—</div>
-            <div class="tb-pct" id="ta-fresh-pct"></div>
-            <div class="tb-rate">Full price</div>
-          </div>
-          <div class="token-box token-box--write">
-            <div class="tb-label">Cache Write</div>
-            <div class="tb-desc">Context written to cache for the first time</div>
-            <div class="tb-tokens" id="ta-write-tokens">—</div>
-            <div class="tb-pct" id="ta-write-pct"></div>
-            <div class="tb-rate">1.25× price (one-time)</div>
-          </div>
-          <div class="token-box token-box--read">
-            <div class="tb-label">Cache Read</div>
-            <div class="tb-desc">Context retrieved from cache — already stored</div>
-            <div class="tb-tokens" id="ta-read-tokens">—</div>
-            <div class="tb-pct" id="ta-read-pct"></div>
-            <div class="tb-rate">0.1× price — 10× cheaper</div>
-          </div>
-          <div class="token-box token-box--output">
-            <div class="tb-label">Output</div>
-            <div class="tb-desc">Tokens Claude generated in response</div>
-            <div class="tb-tokens" id="ta-out-tokens">—</div>
-            <div class="tb-pct" id="ta-out-pct"></div>
-            <div class="tb-rate">Full price</div>
-          </div>
-        </div>
-        <div class="token-summary">
-          <div class="ts-item">
-            <div class="ts-label">Total Tokens</div>
-            <div class="ts-value" id="ta-total">—</div>
-            <div class="ts-sub" id="ta-calls"></div>
-          </div>
-          <div class="ts-item">
-            <div class="ts-label">Actual Cost</div>
-            <div class="ts-value" id="ta-cost">—</div>
-          </div>
-          <div class="ts-item">
-            <div class="ts-label">Cache Savings</div>
-            <div class="ts-value ts-value--green" id="ta-savings">—</div>
-            <div class="ts-sub">vs paying full price for reads</div>
-          </div>
-          <div class="ts-item">
-            <div class="ts-label">Cache Read %</div>
-            <div class="ts-value" id="ta-cache-pct">—</div>
-            <div class="ts-sub">of total context tokens</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- KPI Cards — hero section -->
-      <div class="kpi-grid">
-        <div class="kpi-card">
+      <!-- KPI Cards — spend focused -->
+      <div class="kpi-grid kpi-grid--spend">
+        <div class="kpi-card kpi-card--primary">
           <div class="kpi-label">Today</div>
-          <div class="kpi-savings" id="kpi-savings-1">&mdash;</div>
-          <div class="kpi-spent" id="kpi-1">&mdash;</div>
+          <div class="kpi-value" id="kpi-cost-1">&mdash;</div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card kpi-card--primary">
           <div class="kpi-label">7 Days</div>
-          <div class="kpi-savings" id="kpi-savings-7">&mdash;</div>
-          <div class="kpi-spent" id="kpi-7">&mdash;</div>
+          <div class="kpi-value" id="kpi-cost-7">&mdash;</div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card kpi-card--primary">
           <div class="kpi-label">30 Days</div>
-          <div class="kpi-savings" id="kpi-savings-30">&mdash;</div>
-          <div class="kpi-spent" id="kpi-30">&mdash;</div>
+          <div class="kpi-value" id="kpi-cost-30">&mdash;</div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card kpi-card--primary">
           <div class="kpi-label">365 Days</div>
-          <div class="kpi-savings" id="kpi-savings-365">&mdash;</div>
-          <div class="kpi-spent" id="kpi-365">&mdash;</div>
+          <div class="kpi-value" id="kpi-cost-365">&mdash;</div>
         </div>
-        <div class="kpi-card">
-          <div class="kpi-label">Waste Detected</div>
-          <div class="kpi-savings" id="kpi-waste-tokens" style="color: var(--warn, #f59e0b);">&mdash;</div>
-          <div class="kpi-spent" id="kpi-waste-savings">&mdash;</div>
+        <div class="kpi-card kpi-card--forecast">
+          <div class="kpi-label">Month Forecast</div>
+          <div class="kpi-value" id="kpi-forecast-val">&mdash;</div>
+          <div class="kpi-sub" id="kpi-forecast-sub"></div>
+        </div>
+        <div class="kpi-card kpi-card--saved">
+          <div class="kpi-label">Saved (30d)</div>
+          <div class="kpi-value" id="kpi-saved-30">&mdash;</div>
+          <div class="kpi-sub">cache</div>
         </div>
       </div>
 
-      <!-- Forecast -->
-      <div class="card" id="forecast-card">
+      <!-- Daily Cost Chart — full width, stacked by model or source -->
+      <div class="card card--wide">
         <div class="card__header">
-          <h3>Month-End Forecast</h3>
-        </div>
-        <div id="forecast-content"><span class="muted">Loading&hellip;</span></div>
-      </div>
-
-      <!-- Charts side by side -->
-      <div class="chart-row">
-        <div class="card">
-          <div class="card__header">
-            <h3>Token Volume</h3>
-            <div class="row" id="chartToggle">
-              <button class="tab tab--active" data-range="7">7d</button>
-              <button class="tab" data-range="30">30d</button>
+          <h3>Daily Cost</h3>
+          <div class="cost-chart-controls">
+            <div class="cost-mode-toggle" id="costChartMode">
+              <button class="tab tab--active" data-mode="model">By Model</button>
+              <button class="tab" data-mode="source">By Source</button>
+            </div>
+            <div class="row" id="costChartRange">
+              <button class="tab" data-range="7">7d</button>
+              <button class="tab tab--active" data-range="30">30d</button>
               <button class="tab" data-range="90">90d</button>
-              <button class="tab" data-range="365">365d</button>
             </div>
           </div>
-          <div class="chart-wrap">
-            <canvas id="tokenChart"></canvas>
+        </div>
+        <div class="chart-wrap chart-wrap--tall">
+          <canvas id="costChart"></canvas>
+        </div>
+        <div class="cost-chart-legend" id="costChartLegend"></div>
+      </div>
+
+      <!-- Spend Breakdown: By Model + By Source -->
+      <div class="spend-breakdown">
+        <div class="card">
+          <div class="card__header">
+            <h3>By Model</h3>
+            <div class="ta-period-tabs" id="breakdownPeriodTabs">
+              <button class="tab" data-days="1">Today</button>
+              <button class="tab tab--active" data-days="30">30d</button>
+              <button class="tab" data-days="365">365d</button>
+            </div>
+          </div>
+          <div class="breakdown-bars" id="modelBreakdownBars">
+            <div class="muted">Loading&hellip;</div>
           </div>
         </div>
         <div class="card">
           <div class="card__header">
-            <h3>Cache Hit Rate</h3>
-            <div class="meta" id="cacheTrendMeta">&mdash;</div>
+            <h3>By Source</h3>
           </div>
-          <div class="chart-wrap">
-            <canvas id="cacheTrendChart"></canvas>
+          <div class="breakdown-bars" id="sourceBreakdownBars">
+            <div class="muted">Loading&hellip;</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cache & Efficiency — collapsed accordion -->
+      <div class="cache-accordion" id="cacheAccordion">
+        <button class="cache-accordion__header" id="cacheAccordionToggle" aria-expanded="false">
+          <span class="ca-title">Cache &amp; Efficiency</span>
+          <div class="ca-summary">
+            <span class="ca-saved" id="cacheAccordionSaved">&mdash;</span>
+            <span class="ca-hit" id="cacheAccordionHitRate">&mdash;</span>
+            <span class="ca-chevron">&#9660;</span>
+          </div>
+        </button>
+        <div class="cache-accordion__body hidden" id="cacheAccordionContent">
+          <!-- Waste summary -->
+          <div class="ca-waste-row">
+            <span class="ca-waste-label">Waste Detected</span>
+            <span class="ca-waste-tokens" id="kpi-waste-tokens">&mdash;</span>
+            <span class="ca-waste-savings" id="kpi-waste-savings"></span>
+          </div>
+          <!-- Token Anatomy -->
+          <div class="token-anatomy">
+            <div class="token-anatomy__header">
+              <h3>Token Breakdown</h3>
+              <div class="ta-period-tabs" id="taPeriodTabs">
+                <button class="tab" data-days="1">Today</button>
+                <button class="tab tab--active" data-days="7">7d</button>
+                <button class="tab" data-days="30">30d</button>
+                <button class="tab" data-days="365">365d</button>
+              </div>
+            </div>
+            <div class="token-boxes">
+              <div class="token-box token-box--fresh">
+                <div class="tb-label">Fresh Input</div>
+                <div class="tb-desc">New tokens sent this turn — not cached</div>
+                <div class="tb-tokens" id="ta-fresh-tokens">—</div>
+                <div class="tb-pct" id="ta-fresh-pct"></div>
+                <div class="tb-rate">Full price</div>
+              </div>
+              <div class="token-box token-box--write">
+                <div class="tb-label">Cache Write</div>
+                <div class="tb-desc">Context written to cache for the first time</div>
+                <div class="tb-tokens" id="ta-write-tokens">—</div>
+                <div class="tb-pct" id="ta-write-pct"></div>
+                <div class="tb-rate">1.25× price (one-time)</div>
+              </div>
+              <div class="token-box token-box--read">
+                <div class="tb-label">Cache Read</div>
+                <div class="tb-desc">Context retrieved from cache — already stored</div>
+                <div class="tb-tokens" id="ta-read-tokens">—</div>
+                <div class="tb-pct" id="ta-read-pct"></div>
+                <div class="tb-rate">0.1× price — 10× cheaper</div>
+              </div>
+              <div class="token-box token-box--output">
+                <div class="tb-label">Output</div>
+                <div class="tb-desc">Tokens Claude generated in response</div>
+                <div class="tb-tokens" id="ta-out-tokens">—</div>
+                <div class="tb-pct" id="ta-out-pct"></div>
+                <div class="tb-rate">Full price</div>
+              </div>
+            </div>
+            <div class="token-summary">
+              <div class="ts-item">
+                <div class="ts-label">Total Tokens</div>
+                <div class="ts-value" id="ta-total">—</div>
+                <div class="ts-sub" id="ta-calls"></div>
+              </div>
+              <div class="ts-item">
+                <div class="ts-label">Actual Cost</div>
+                <div class="ts-value" id="ta-cost">—</div>
+              </div>
+              <div class="ts-item">
+                <div class="ts-label">Cache Savings</div>
+                <div class="ts-value ts-value--green" id="ta-savings">—</div>
+                <div class="ts-sub">vs paying full price for reads</div>
+              </div>
+              <div class="ts-item">
+                <div class="ts-label">Cache Read %</div>
+                <div class="ts-value" id="ta-cache-pct">—</div>
+                <div class="ts-sub">of total context tokens</div>
+              </div>
+            </div>
+          </div>
+          <!-- Cache Hit Rate Chart -->
+          <div class="ca-chart-wrap">
+            <div class="ca-chart-header">
+              <span>Cache Hit Rate</span>
+              <span class="meta" id="cacheTrendMeta">&mdash;</span>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="cacheTrendChart"></canvas>
+            </div>
           </div>
         </div>
       </div>
@@ -320,27 +350,6 @@
         </div>
       </div>
 
-      <!-- Provider + Source breakdown -->
-      <div class="dash-bottom">
-        <div class="card">
-          <div class="card__header"><h3>Cost by Provider</h3></div>
-          <table class="data-table" id="providerTable">
-            <thead><tr><th>Provider</th><th>Calls</th><th>Cost</th></tr></thead>
-            <tbody id="providerBody">
-              <tr><td colspan="3" class="table-empty">Loading&hellip;</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="card">
-          <div class="card__header"><h3>Cost by Source</h3></div>
-          <table class="data-table" id="sourceTable">
-            <thead><tr><th>Source</th><th>Calls</th><th>Cost</th></tr></thead>
-            <tbody id="sourceBody">
-              <tr><td colspan="3" class="table-empty">Loading&hellip;</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
 
     <!-- PAGE: Deep Dive -->
@@ -592,6 +601,6 @@
     </div>
   </footer>
 
-  <script src="/static/app.js?v=11"></script>
+  <script src="/static/app.js?v=12"></script>
 </body>
 </html>

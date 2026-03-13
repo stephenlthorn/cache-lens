@@ -457,19 +457,46 @@ setLoading(false);
 
 // ─── Dashboard ─────────────────────────────────────────────────────────────
 
-let tokenChart = null;
+let costChart = null;
 let dashboardInitialized = false;
-let currentChartRange = 30;
+let currentCostRange = 30;
+let currentCostMode = 'model';
+let currentBreakdownDays = 30;
+
+// Color palette: index 0-2 reserved for model colors, 3+ for sources
+const COST_PALETTE = ['#7c5cff','#64a0ff','#2ee9a6','#ffb020','#ff6b6b','#e879f9','#38bdf8','#a3e635'];
+
+function modelColor(modelName) {
+  const m = (modelName || '').toLowerCase();
+  if (m.includes('opus'))   return COST_PALETTE[0];
+  if (m.includes('sonnet')) return COST_PALETTE[1];
+  if (m.includes('haiku'))  return COST_PALETTE[2];
+  return null; // caller assigns from overflow
+}
+
+function assignColors(keys, mode) {
+  const result = {};
+  let overflowIdx = mode === 'model' ? 3 : 3;
+  for (const key of keys) {
+    if (mode === 'model') {
+      const fixed = modelColor(key);
+      if (fixed) { result[key] = fixed; continue; }
+    }
+    result[key] = COST_PALETTE[overflowIdx % COST_PALETTE.length];
+    overflowIdx++;
+  }
+  return result;
+}
 
 function refreshDashboard() {
   loadKPIs();
-  loadTokenChart(currentChartRange);
-  loadProviderBreakdown();
-  loadSourceBreakdown();
+  loadCostChart(currentCostRange, currentCostMode);
+  loadSpendBreakdown(currentBreakdownDays);
   loadCacheTrend();
   loadSessions();
   loadBudgetStatus();
-  loadForecast();
+  loadForecastKPI();
+  loadCacheAccordionSummary();
 }
 
 function initDashboard() {
@@ -482,15 +509,37 @@ function initDashboard() {
   setInterval(backfillLiveFeed, 10000);
   setInterval(refreshDashboard, 60000);
 
-  document.querySelectorAll('#chartToggle .tab').forEach(btn => {
+  // Cost chart range tabs
+  document.querySelectorAll('#costChartRange .tab').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('#chartToggle .tab').forEach(b => b.classList.remove('tab--active'));
+      document.querySelectorAll('#costChartRange .tab').forEach(b => b.classList.remove('tab--active'));
       btn.classList.add('tab--active');
-      currentChartRange = parseInt(btn.dataset.range, 10);
-      loadTokenChart(currentChartRange);
+      currentCostRange = parseInt(btn.dataset.range, 10);
+      loadCostChart(currentCostRange, currentCostMode);
     });
   });
 
+  // Cost chart mode toggle (model / source)
+  document.querySelectorAll('#costChartMode .tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#costChartMode .tab').forEach(b => b.classList.remove('tab--active'));
+      btn.classList.add('tab--active');
+      currentCostMode = btn.dataset.mode;
+      loadCostChart(currentCostRange, currentCostMode);
+    });
+  });
+
+  // Spend breakdown period tabs
+  document.querySelectorAll('#breakdownPeriodTabs .tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#breakdownPeriodTabs .tab').forEach(b => b.classList.remove('tab--active'));
+      btn.classList.add('tab--active');
+      currentBreakdownDays = parseInt(btn.dataset.days, 10);
+      loadSpendBreakdown(currentBreakdownDays);
+    });
+  });
+
+  // Token anatomy period tabs (inside accordion)
   document.querySelectorAll('#taPeriodTabs .tab').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#taPeriodTabs .tab').forEach(b => b.classList.remove('tab--active'));
@@ -498,34 +547,75 @@ function initDashboard() {
       loadTokenAnatomy(parseInt(btn.dataset.days, 10));
     });
   });
+
+  // Cache accordion toggle
+  const accordionToggle = el('cacheAccordionToggle');
+  const accordionContent = el('cacheAccordionContent');
+  if (accordionToggle && accordionContent) {
+    accordionToggle.addEventListener('click', () => {
+      const isOpen = !accordionContent.classList.contains('hidden');
+      accordionContent.classList.toggle('hidden', isOpen);
+      accordionToggle.setAttribute('aria-expanded', String(!isOpen));
+      accordionToggle.querySelector('.ca-chevron').textContent = isOpen ? '▼' : '▲';
+      if (!isOpen) {
+        loadTokenAnatomy(7);
+        loadCacheTrend();
+      }
+    });
+  }
 }
 
 async function loadKPIs() {
-  const periods = [
-    { days: 1, label: 'Today' },
-    { days: 7, label: 'Last 7 days' },
-    { days: 30, label: 'Last 30 days' },
-    { days: 365, label: 'Last 365 days' },
-  ];
-  for (const p of periods) {
+  const periods = [1, 7, 30, 365];
+  for (const days of periods) {
     try {
-      const r = await fetch(apiUrl(`/api/usage/kpi?days=${p.days}`));
+      const r = await fetch(apiUrl(`/api/usage/kpi?days=${days}`));
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
-      const savEl = el(`kpi-savings-${p.days}`);
-      if (savEl) {
-        const saved = typeof data.savings_usd === 'number' ? data.savings_usd : 0;
-        savEl.textContent = `$${saved.toFixed(2)}`;
+      const costEl = el(`kpi-cost-${days}`);
+      if (costEl) costEl.textContent = fmtCost(data.total_cost_usd || 0);
+      // populate saved card from 30d
+      if (days === 30) {
+        const savedEl = el('kpi-saved-30');
+        if (savedEl) savedEl.textContent = fmtCost(data.savings_usd || 0);
+        // also populate cache accordion summary savings
+        const accSaved = el('cacheAccordionSaved');
+        if (accSaved) accSaved.textContent = fmtCost(data.savings_usd || 0) + ' saved';
       }
-      const spentEl = el(`kpi-${p.days}`);
-      if (spentEl) spentEl.textContent = `Spent: $${(data.total_cost_usd || 0).toFixed(2)}`;
     } catch {
-      const savEl = el(`kpi-savings-${p.days}`);
-      if (savEl) savEl.textContent = '—';
-      const spentEl = el(`kpi-${p.days}`);
-      if (spentEl) spentEl.textContent = '';
+      const costEl = el(`kpi-cost-${days}`);
+      if (costEl) costEl.textContent = '—';
     }
   }
+}
+
+async function loadForecastKPI() {
+  const valEl = el('kpi-forecast-val');
+  const subEl = el('kpi-forecast-sub');
+  if (!valEl) return;
+  try {
+    const r = await fetch(apiUrl('/api/usage/forecast'));
+    if (!r.ok) { valEl.textContent = '—'; return; }
+    const data = await r.json();
+    valEl.textContent = fmtCost(data.projected_monthly_usd);
+    if (subEl) subEl.textContent = `$${(data.daily_avg_usd || 0).toFixed(2)}/day`;
+  } catch {
+    valEl.textContent = '—';
+  }
+}
+
+async function loadCacheAccordionSummary() {
+  const hitEl = el('cacheAccordionHitRate');
+  if (!hitEl) return;
+  try {
+    const r = await fetch(apiUrl('/api/usage/cache-trend?days=30'));
+    if (!r.ok) return;
+    const { data } = await r.json();
+    if (data && data.length > 0) {
+      const avg = data.reduce((s, d) => s + (d.cache_hit_pct || 0), 0) / data.length;
+      hitEl.textContent = avg.toFixed(0) + '% hit rate';
+    }
+  } catch { /* silent */ }
 }
 
 async function loadTokenAnatomy(days = 7) {
@@ -578,84 +668,75 @@ async function loadTokenAnatomy(days = 7) {
   }
 }
 
-async function loadTokenChart(days) {
+async function loadCostChart(days, mode) {
   try {
     const r = await fetch(apiUrl(`/api/usage/daily?days=${days}`));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const { rows } = await r.json();
-    renderTokenChart(rows);
+    renderCostChart(rows, mode);
   } catch {
     // silently leave chart empty
   }
 }
 
-function renderTokenChart(rows) {
-  const canvas = el('tokenChart');
+function renderCostChart(rows, mode) {
+  const canvas = el('costChart');
   if (!canvas) return;
 
-  // Aggregate by date (multiple provider/model/source rows per date)
-  const byDate = {};
+  const groupKey = mode === 'source' ? 'source' : 'model';
+
+  // Collect all dates and group keys
+  const dateSet = new Set();
+  const groupSet = new Set();
+  for (const row of rows) {
+    dateSet.add(row.date);
+    groupSet.add(row[groupKey] || 'unknown');
+  }
+  const dates = Array.from(dateSet).sort();
+  const groups = Array.from(groupSet);
+
+  // Aggregate cost by date+group
+  const byDateGroup = {};
   for (const row of rows) {
     const d = row.date;
-    if (!byDate[d]) byDate[d] = { input_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0, output_tokens: 0 };
-    byDate[d].input_tokens += row.input_tokens || 0;
-    byDate[d].cache_write_tokens += row.cache_write_tokens || 0;
-    byDate[d].cache_read_tokens += row.cache_read_tokens || 0;
-    byDate[d].output_tokens += row.output_tokens || 0;
-  }
-  const dates = Object.keys(byDate).sort();
-  const labels = dates;
-  const inputData = dates.map(d => byDate[d].input_tokens);
-  const cacheWriteData = dates.map(d => byDate[d].cache_write_tokens);
-  const cacheData = dates.map(d => byDate[d].cache_read_tokens);
-  const outputData = dates.map(d => byDate[d].output_tokens);
-
-  if (tokenChart) {
-    tokenChart.destroy();
-    tokenChart = null;
+    const g = row[groupKey] || 'unknown';
+    if (!byDateGroup[d]) byDateGroup[d] = {};
+    byDateGroup[d][g] = (byDateGroup[d][g] || 0) + (row.cost_usd || 0);
   }
 
-  tokenChart = new Chart(canvas, {
+  // Sort groups by total cost desc
+  const groupTotals = {};
+  for (const g of groups) {
+    groupTotals[g] = dates.reduce((s, d) => s + (byDateGroup[d]?.[g] || 0), 0);
+  }
+  groups.sort((a, b) => groupTotals[b] - groupTotals[a]);
+
+  const colors = assignColors(groups, mode);
+
+  const datasets = groups.map(g => ({
+    label: g,
+    data: dates.map(d => parseFloat((byDateGroup[d]?.[g] || 0).toFixed(4))),
+    backgroundColor: colors[g] + 'cc',
+    borderColor: colors[g],
+    borderWidth: 0,
+    borderRadius: 2,
+    borderSkipped: false,
+  }));
+
+  if (costChart) { costChart.destroy(); costChart = null; }
+
+  costChart = new Chart(canvas, {
     type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'Fresh Input',
-          data: inputData,
-          backgroundColor: 'rgba(124,92,255,0.75)',
-          borderRadius: 3,
-          borderSkipped: false,
-        },
-        {
-          label: 'Cache Write',
-          data: cacheWriteData,
-          backgroundColor: 'rgba(255,176,32,0.75)',
-          borderRadius: 3,
-          borderSkipped: false,
-        },
-        {
-          label: 'Cache Read',
-          data: cacheData,
-          backgroundColor: 'rgba(46,233,166,0.75)',
-          borderRadius: 3,
-          borderSkipped: false,
-        },
-        {
-          label: 'Output',
-          data: outputData,
-          backgroundColor: 'rgba(100,160,255,0.75)',
-          borderRadius: 3,
-          borderSkipped: false,
-        },
-      ]
-    },
+    data: { labels: dates, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: {
-          labels: { color: '#94a3b8', font: { size: 11 } }
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: $${ctx.parsed.y.toFixed(3)}`
+          }
         }
       },
       scales: {
@@ -666,70 +747,69 @@ function renderTokenChart(rows) {
         },
         y: {
           stacked: true,
-          ticks: { color: '#64748b', font: { size: 10 } },
+          ticks: { color: '#64748b', font: { size: 10 }, callback: v => '$' + v.toFixed(2) },
           grid: { color: 'rgba(255,255,255,0.04)' }
         }
       }
     }
   });
-}
 
-async function loadProviderBreakdown() {
-  const tbody = el('providerBody');
-  if (!tbody) return;
-  try {
-    const r = await fetch(apiUrl('/api/usage/daily?days=365'));
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const { rows } = await r.json();
-
-    const byProvider = {};
-    for (const row of rows) {
-      const prov = row.provider || 'unknown';
-      if (!byProvider[prov]) byProvider[prov] = { calls: 0, cost: 0 };
-      byProvider[prov].calls += row.call_count || 0;
-      byProvider[prov].cost += row.cost_usd || 0;
-    }
-
-    const sorted = Object.entries(byProvider).sort((a, b) => b[1].cost - a[1].cost);
-    if (sorted.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" class="table-empty">No data.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = sorted.map(([prov, d]) =>
-      `<tr><td>${escapeHtml(prov)}</td><td>${fmtInt(d.calls)}</td><td>${fmtCost(d.cost)}</td></tr>`
+  // Render custom legend
+  const legendEl = el('costChartLegend');
+  if (legendEl) {
+    legendEl.innerHTML = groups.map(g =>
+      `<span class="cost-legend-item"><span class="cost-legend-dot" style="background:${colors[g]}"></span>${escapeHtml(g)}</span>`
     ).join('');
-  } catch {
-    tbody.innerHTML = '<tr><td colspan="3" class="table-empty">Failed to load.</td></tr>';
   }
 }
 
-async function loadSourceBreakdown() {
-  const tbody = el('sourceBody');
-  if (!tbody) return;
+async function loadSpendBreakdown(days) {
+  const modelEl = el('modelBreakdownBars');
+  const sourceEl = el('sourceBreakdownBars');
   try {
-    const r = await fetch(apiUrl('/api/usage/daily?days=365'));
+    const r = await fetch(apiUrl(`/api/usage/daily?days=${days}`));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const { rows } = await r.json();
 
+    // Aggregate by model
+    const byModel = {};
     const bySource = {};
     for (const row of rows) {
-      const src = row.source || 'unknown';
-      if (!bySource[src]) bySource[src] = { calls: 0, cost: 0 };
-      bySource[src].calls += row.call_count || 0;
-      bySource[src].cost += row.cost_usd || 0;
+      const m = row.model || 'unknown';
+      const s = row.source || 'unknown';
+      byModel[m] = (byModel[m] || 0) + (row.cost_usd || 0);
+      bySource[s] = (bySource[s] || 0) + (row.cost_usd || 0);
     }
 
-    const sorted = Object.entries(bySource).sort((a, b) => b[1].cost - a[1].cost);
-    if (sorted.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" class="table-empty">No data.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = sorted.map(([src, d]) =>
-      `<tr><td>${escapeHtml(src)}</td><td>${fmtInt(d.calls)}</td><td>${fmtCost(d.cost)}</td></tr>`
-    ).join('');
+    const modelColors = assignColors(Object.keys(byModel), 'model');
+    const sourceColors = assignColors(Object.keys(bySource), 'source');
+
+    if (modelEl) modelEl.innerHTML = renderBreakdownBars(byModel, modelColors);
+    if (sourceEl) sourceEl.innerHTML = renderBreakdownBars(bySource, sourceColors);
   } catch {
-    tbody.innerHTML = '<tr><td colspan="3" class="table-empty">Failed to load.</td></tr>';
+    if (modelEl) modelEl.innerHTML = '<div class="muted">Failed to load.</div>';
+    if (sourceEl) sourceEl.innerHTML = '<div class="muted">Failed to load.</div>';
   }
+}
+
+function renderBreakdownBars(totals, colors) {
+  const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  if (sorted.length === 0) return '<div class="muted">No data.</div>';
+  const max = sorted[0][1];
+  const grandTotal = sorted.reduce((s, [, v]) => s + v, 0);
+  return sorted.map(([key, cost]) => {
+    const pct = grandTotal > 0 ? (cost / grandTotal * 100) : 0;
+    const barPct = max > 0 ? (cost / max * 100) : 0;
+    const color = colors[key] || COST_PALETTE[3];
+    return `<div class="breakdown-row">
+      <div class="breakdown-row__label">${escapeHtml(key)}</div>
+      <div class="breakdown-row__bar-wrap">
+        <div class="breakdown-row__bar" style="width:${barPct.toFixed(1)}%;background:${color}"></div>
+      </div>
+      <div class="breakdown-row__cost">${fmtCost(cost)}</div>
+      <div class="breakdown-row__pct">${pct.toFixed(0)}%</div>
+    </div>`;
+  }).join('');
 }
 
 // ─── Live Feed ──────────────────────────────────────────────────────────────
