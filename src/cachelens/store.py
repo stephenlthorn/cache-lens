@@ -814,6 +814,48 @@ class UsageStore:
             ).fetchone()
         return dict(row) if row else None
 
+    # ------------------------------------------------------------------
+    # Waste Items (Task 2)
+    # ------------------------------------------------------------------
+
+    def insert_waste_items(self, *, call_id: int, items: list[dict]) -> None:
+        with self._lock:
+            self._con.executemany(
+                "INSERT INTO call_waste (call_id, waste_type, waste_tokens, savings_usd, detail)"
+                " VALUES (?, ?, ?, ?, ?)",
+                [(call_id, item["waste_type"], item["waste_tokens"],
+                  item["savings_usd"], item["detail"]) for item in items],
+            )
+            self._con.commit()
+
+    def get_waste_for_call(self, call_id: int) -> list[dict]:
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT * FROM call_waste WHERE call_id=? ORDER BY waste_tokens DESC",
+                (call_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def waste_summary(self, days: int = 30) -> dict:
+        cutoff = int(time.time()) - days * 86400
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT waste_type, SUM(waste_tokens) as tokens, SUM(savings_usd) as savings"
+                " FROM call_waste"
+                " JOIN calls ON call_waste.call_id = calls.id"
+                " WHERE calls.ts >= ?"
+                " GROUP BY waste_type",
+                (cutoff,)
+            ).fetchall()
+        by_type = {r["waste_type"]: r["tokens"] for r in rows}
+        total_tokens = sum(by_type.values())
+        total_savings = sum(r["savings"] for r in rows)
+        return {
+            "total_waste_tokens": total_tokens,
+            "total_savings_usd": total_savings,
+            "by_type": by_type,
+        }
+
     def close(self) -> None:
         self._con.close()
 

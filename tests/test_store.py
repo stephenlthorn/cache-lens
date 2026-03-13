@@ -648,3 +648,43 @@ def test_migrate_existing_db_adds_columns(tmp_path):
     cols = {row[1] for row in store._con.execute("PRAGMA table_info(calls)").fetchall()}
     assert "max_tokens_requested" in cols
     assert "token_heatmap" in cols
+
+
+def test_insert_and_query_waste(tmp_path):
+    store = UsageStore(tmp_path / "test.db")
+    call_id = store.insert_call(
+        ts=1000, provider="anthropic", model="claude-sonnet-4-6",
+        source="test", source_tag=None,
+        input_tokens=100, output_tokens=50,
+        cache_read_tokens=0, cache_write_tokens=0,
+        cost_usd=0.001, endpoint="/v1/messages",
+        request_hash="abc",
+    )
+    store.insert_waste_items(call_id=call_id, items=[
+        {"waste_type": "whitespace", "waste_tokens": 50, "savings_usd": 0.0001, "detail": "{}"},
+        {"waste_type": "polite_filler", "waste_tokens": 20, "savings_usd": 0.00004, "detail": "{}"},
+    ])
+    rows = store.get_waste_for_call(call_id)
+    assert len(rows) == 2
+    assert rows[0]["waste_type"] == "whitespace"
+    assert rows[0]["waste_tokens"] == 50
+
+
+def test_waste_summary_aggregates(tmp_path):
+    store = UsageStore(tmp_path / "test.db")
+    now = int(__import__("time").time())
+    for i in range(3):
+        cid = store.insert_call(
+            ts=now - i * 3600, provider="anthropic", model="claude-sonnet-4-6",
+            source="test", source_tag=None,
+            input_tokens=100, output_tokens=50,
+            cache_read_tokens=0, cache_write_tokens=0,
+            cost_usd=0.001, endpoint="/v1/messages",
+            request_hash=f"hash{i}",
+        )
+        store.insert_waste_items(call_id=cid, items=[
+            {"waste_type": "whitespace", "waste_tokens": 10 * (i + 1), "savings_usd": 0.001 * (i + 1), "detail": "{}"},
+        ])
+    summary = store.waste_summary(days=1)
+    assert summary["total_waste_tokens"] == 60
+    assert summary["by_type"]["whitespace"] == 60
