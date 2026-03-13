@@ -725,6 +725,11 @@ def create_app(
         s: UsageStore = request.app.state.store
         return JSONResponse(content=s.output_efficiency(days=days))
 
+    @app.get("/api/usage/conversation-efficiency")
+    def api_conversation_efficiency(request: Request, days: int = 30) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        return JSONResponse(content=s.conversation_efficiency(days=days))
+
     # --- Webhook Notifications ---
 
     @app.get("/api/settings/webhooks")

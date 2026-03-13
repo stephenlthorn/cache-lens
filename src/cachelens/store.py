@@ -858,6 +858,25 @@ class UsageStore:
             "by_type": by_type,
         }
 
+    def conversation_efficiency(self, days: int = 30) -> list[dict]:
+        """Per source: avg message count, avg history ratio, call count."""
+        cutoff = int(time.time()) - days * 86400
+        with self._lock:
+            rows = self._con.execute(
+                """
+                SELECT source, COUNT(*) as call_count,
+                       AVG(message_count) as avg_message_count,
+                       AVG(history_ratio) as avg_history_ratio,
+                       AVG(history_tokens) as avg_history_tokens
+                FROM calls
+                WHERE ts >= ? AND message_count > 6 AND history_ratio IS NOT NULL
+                GROUP BY source
+                ORDER BY avg_history_ratio DESC
+                """,
+                (cutoff,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def output_efficiency(self, days: int = 30) -> list[dict]:
         """Per source+model: avg utilization, call count, suggested max_tokens."""
         cutoff = int(time.time()) - days * 86400

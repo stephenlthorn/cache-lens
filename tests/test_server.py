@@ -1010,3 +1010,38 @@ def test_output_efficiency_calculates_utilization(client: TestClient, test_store
     row = next(r for r in data if r["source"] == "myapp")
     assert row["avg_utilization"] == pytest.approx(0.125, rel=0.01)
     assert row["call_count"] == 12
+
+
+# ---------------------------------------------------------------------------
+# /api/usage/conversation-efficiency (Task 9)
+# ---------------------------------------------------------------------------
+
+
+def test_conversation_efficiency_endpoint_empty(client):
+    resp = client.get("/api/usage/conversation-efficiency")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+
+
+def test_conversation_efficiency_with_multi_turn(client: TestClient, test_store: UsageStore):
+    now = int(__import__("time").time())
+    for i in range(5):
+        test_store.insert_call(
+            ts=now - i * 120, provider="anthropic", model="claude-sonnet-4-6",
+            source="chatbot", source_tag=None,
+            input_tokens=1000, output_tokens=200,
+            cache_read_tokens=0, cache_write_tokens=0,
+            cost_usd=0.01, endpoint="/v1/messages",
+            request_hash=f"hb{i}",
+            message_count=10,
+            history_tokens=700,
+            history_ratio=0.7,
+        )
+    resp = client.get("/api/usage/conversation-efficiency?days=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) > 0
+    row = next(r for r in data if r["source"] == "chatbot")
+    assert row["avg_message_count"] == pytest.approx(10, rel=0.01)
+    assert row["avg_history_ratio"] == pytest.approx(0.7, rel=0.01)

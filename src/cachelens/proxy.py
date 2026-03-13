@@ -412,6 +412,36 @@ async def handle_proxy_request(
                     pass
                 break
 
+    # Compute history metrics from request messages
+    _message_count: int | None = None
+    _history_tokens: int | None = None
+    _history_ratio: float | None = None
+
+    if parsed_body is not None:
+        messages = parsed_body.get("messages") or []
+        if isinstance(messages, list):
+            _message_count = len(messages)
+            if _message_count > 6:
+                history_msgs = [
+                    m for m in messages[:-1]
+                    if m.get("role") in ("user", "assistant")
+                ]
+                if history_msgs:
+                    try:
+                        import tiktoken
+                        enc = tiktoken.get_encoding("cl100k_base")
+
+                        def _tok(m: dict) -> int:
+                            c = m.get("content") or ""
+                            return len(enc.encode(c)) if isinstance(c, str) else 0
+
+                        _history_tokens = sum(_tok(m) for m in history_msgs)
+                        total_input = sum(_tok(m) for m in messages)
+                        if total_input > 0:
+                            _history_ratio = _history_tokens / total_input
+                    except Exception:
+                        pass
+
     # Determine streaming: Google uses path (streamGenerateContent), others use body
     if parsed.provider == "google":
         streaming = "streamGenerateContent" in parsed.upstream_path
@@ -452,6 +482,9 @@ async def handle_proxy_request(
             parsed_body=parsed_body,
             _waste_items=_waste_items,
             _max_tokens_requested=_max_tokens_requested,
+            _message_count=_message_count,
+            _history_tokens=_history_tokens,
+            _history_ratio=_history_ratio,
         )
     else:
         async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
@@ -472,6 +505,9 @@ async def handle_proxy_request(
                 parsed_body=parsed_body,
                 _waste_items=_waste_items,
                 _max_tokens_requested=_max_tokens_requested,
+                _message_count=_message_count,
+                _history_tokens=_history_tokens,
+                _history_ratio=_history_ratio,
             )
 
 

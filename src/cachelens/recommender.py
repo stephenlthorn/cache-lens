@@ -122,6 +122,36 @@ def generate_recommendations(store: UsageStore) -> list[Recommendation]:
     except Exception:
         pass  # output_efficiency may not exist on old DBs; skip gracefully
 
+    # Check: history bloat — sources with high history token ratio
+    try:
+        import hashlib
+        conv_rows = store.conversation_efficiency(days=30)
+        for row in conv_rows:
+            if row["avg_history_ratio"] > 0.6 and row["call_count"] >= 5:
+                rec_id = hashlib.md5(
+                    f"history_bloat:{row['source']}".encode()
+                ).hexdigest()[:12]
+                recommendations.append(Recommendation(
+                    id=rec_id,
+                    type="history_bloat",
+                    title="History Bloat Detected",
+                    description=(
+                        f"Source '{row['source']}' has {row['avg_history_ratio']:.0%} of tokens "
+                        f"in historical context"
+                    ),
+                    estimated_impact="medium",
+                    deep_dive_link="/api/usage/conversation-efficiency",
+                    metrics={
+                        "source": row["source"],
+                        "avg_history_ratio": round(row["avg_history_ratio"], 3),
+                        "avg_message_count": row["avg_message_count"],
+                        "call_count": row["call_count"],
+                    },
+                ))
+                break  # one recommendation per analysis cycle
+    except Exception:
+        pass  # conversation_efficiency may not exist on old DBs; skip gracefully
+
     return _rank(recommendations)
 
 
