@@ -32,7 +32,7 @@ def detect_anomalies(store: UsageStore, days: int = 30) -> list[dict[str, Any]]:
     expected_usd, stddev, threshold_usd, multiplier, call_count, top_models.
     """
     cutoff = (date.today() - timedelta(days=days)).isoformat()
-    raw_rows = store.query_daily_agg_since(cutoff)
+    raw_rows = list(store.query_daily_agg_since(cutoff))
 
     # Supplement with today's live data
     today = date.today().isoformat()
@@ -64,7 +64,7 @@ def detect_anomalies(store: UsageStore, days: int = 30) -> list[dict[str, Any]]:
                 "cost_usd": 0.0, "call_count": 0, "input_tokens": 0,
                 "models": [],
             }
-        daily_by_source[source][d]["cost_usd"] += row["cost_usd"]
+        daily_by_source[source][d]["cost_usd"] += row["cost_usd"] or 0.0
         daily_by_source[source][d]["call_count"] += row["call_count"] or 0
         daily_by_source[source][d]["input_tokens"] += row["input_tokens"] or 0
         daily_by_source[source][d]["models"].append(row["model"])

@@ -1045,3 +1045,15 @@ def test_conversation_efficiency_with_multi_turn(client: TestClient, test_store:
     row = next(r for r in data if r["source"] == "chatbot")
     assert row["avg_message_count"] == pytest.approx(10, rel=0.01)
     assert row["avg_history_ratio"] == pytest.approx(0.7, rel=0.01)
+
+
+# ---------------------------------------------------------------------------
+# /api/usage/anomalies (Task 11)
+# ---------------------------------------------------------------------------
+
+
+def test_anomalies_endpoint_returns_list(client: TestClient) -> None:
+    """GET /api/usage/anomalies returns 200 with a list."""
+    resp = client.get("/api/usage/anomalies")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

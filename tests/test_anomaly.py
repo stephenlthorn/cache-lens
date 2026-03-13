@@ -1,6 +1,4 @@
 """Tests for anomaly.py — cost anomaly detection."""
-import time
-import pytest
 from unittest.mock import MagicMock
 
 
@@ -134,15 +132,15 @@ def test_anomaly_has_required_fields():
 
     store = _make_store_with_agg(rows)
     anomalies = detect_anomalies(store=store, days=14)
-    if anomalies:
-        a = anomalies[0]
-        assert "date" in a
-        assert "source" in a
-        assert "spend_usd" in a
-        assert "expected_usd" in a
-        assert "stddev" in a
-        assert "anomaly_type" in a
-        assert "top_models" in a  # drill-down
+    assert len(anomalies) >= 1, "Expected at least one anomaly for field check"
+    a = anomalies[0]
+    assert "date" in a
+    assert "source" in a
+    assert "spend_usd" in a
+    assert "expected_usd" in a
+    assert "stddev" in a
+    assert "anomaly_type" in a
+    assert "top_models" in a  # drill-down
 
 
 def test_anomaly_drill_down_fields():
