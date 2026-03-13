@@ -479,11 +479,11 @@ class _UpstreamStreamResponse(Response):
         on_call_recorded: Callable[[dict], Awaitable[None]] | None = None,
         user_agent: str = "",
         parsed_body: dict | None = None,
-        _waste_items=None,
-        _max_tokens_requested=None,
-        _message_count=None,
-        _history_tokens=None,
-        _history_ratio=None,
+        _waste_items: list[dict] | None = None,
+        _max_tokens_requested: int | None = None,
+        _message_count: int | None = None,
+        _history_tokens: int | None = None,
+        _history_ratio: float | None = None,
         _token_heatmap: str | None = None,
     ) -> None:
         super().__init__()
@@ -575,11 +575,11 @@ async def _handle_non_streaming(
     user_agent: str = "",
     dedup_enabled: bool = False,
     parsed_body: dict | None = None,
-    _waste_items=None,
-    _max_tokens_requested=None,
-    _message_count=None,
-    _history_tokens=None,
-    _history_ratio=None,
+    _waste_items: list[dict] | None = None,
+    _max_tokens_requested: int | None = None,
+    _message_count: int | None = None,
+    _history_tokens: int | None = None,
+    _history_ratio: float | None = None,
     _token_heatmap: str | None = None,
 ) -> Response:
     t0 = time.time()

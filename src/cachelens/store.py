@@ -169,6 +169,8 @@ class UsageStore:
                  history_tokens, history_ratio, token_heatmap),
             )
             row_id = cur.lastrowid
+            if row_id is None:
+                raise RuntimeError("insert_call: INSERT did not produce a row ID")
             self._con.commit()
         return row_id
 
