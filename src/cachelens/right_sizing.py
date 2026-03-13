@@ -13,16 +13,16 @@ from cachelens.store import UsageStore
 
 # Downgrade map: (current_model) -> {simple: cheaper, moderate: keep_or_cheaper}
 _DOWNGRADE_MAP: dict[str, dict[str, str | None]] = {
-    "claude-opus-4-6":  {"simple": "claude-haiku-4-5", "moderate": "claude-sonnet-4-6"},
-    "claude-sonnet-4-6": {"simple": "claude-haiku-4-5", "moderate": None},
-    "gpt-4o":            {"simple": "gpt-4o-mini",      "moderate": None},
-    "gpt-4.1":           {"simple": "gpt-4.1-mini",     "moderate": None},
-    "gemini-2.5-pro":    {"simple": "gemini-2.0-flash",  "moderate": None},
+    "claude-opus-4-6":           {"simple": "claude-haiku-4-5-20251001", "moderate": "claude-sonnet-4-6"},
+    "claude-sonnet-4-6":         {"simple": "claude-haiku-4-5-20251001", "moderate": None},
+    "gpt-4o":                    {"simple": "gpt-4o-mini",                "moderate": None},
+    "gpt-4.1":                   {"simple": "gpt-4.1-mini",               "moderate": None},
+    "gemini-2.5-pro-preview":    {"simple": "gemini-2.0-flash",           "moderate": None},
 }
 
 
 def score_complexity(call: dict) -> int:
-    """Compute complexity score 0-8 for a single call.
+    """Compute complexity score 0-9 for a single call.
 
     Score 0-2 = simple, 3-4 = moderate, 5+ = complex.
     """
@@ -93,9 +93,9 @@ def analyze_right_sizing(
         if len(group_calls) < 5:
             continue
 
+        scored_calls = [(c, _complexity_label(score_complexity(c))) for c in group_calls]
         complexity_counts = {"simple": 0, "moderate": 0, "complex": 0}
-        for call in group_calls:
-            label = _complexity_label(score_complexity(call))
+        for _, label in scored_calls:
             complexity_counts[label] += 1
 
         n = len(group_calls)
@@ -110,8 +110,7 @@ def analyze_right_sizing(
         # Estimate savings: simple calls moved to cheapest suggestion
         savings = 0.0
         if suggested_simple:
-            simple_calls = [c for c in group_calls
-                            if _complexity_label(score_complexity(c)) == "simple"]
+            simple_calls = [c for c, label in scored_calls if label == "simple"]
             for call in simple_calls:
                 original_cost = call.get("cost_usd") or 0.0
                 cheaper_cost = pricing.cost_usd(

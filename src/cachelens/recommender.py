@@ -179,8 +179,9 @@ def generate_recommendations(store: UsageStore) -> list[Recommendation]:
                         "estimated_savings_usd": row["estimated_savings_usd"],
                     },
                 ))
-    except Exception:
-        pass
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("right_sizing recommendation failed: %s", exc)
 
     return _rank(recommendations)
 

@@ -1,12 +1,5 @@
 """Tests for right_sizing.py — model complexity analysis."""
-import pytest
 from unittest.mock import MagicMock
-
-
-def _make_store_with_calls(call_rows):
-    store = MagicMock()
-    store.recent_calls_with_features.return_value = call_rows
-    return store
 
 
 def test_simple_call_classified_simple():
