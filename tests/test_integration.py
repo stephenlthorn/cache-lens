@@ -1,4 +1,4 @@
-"""Integration tests for CacheLens end-to-end flows.
+"""Integration tests for TokenLens end-to-end flows.
 
 Tests exercise the full stack through the FastAPI server using a real
 (in-memory/tmp) SQLite database. No real HTTP calls are made to upstream
@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cachelens.pricing import PricingTable
-from cachelens.server import create_app
-from cachelens.store import UsageStore
+from tokenlens.pricing import PricingTable
+from tokenlens.server import create_app
+from tokenlens.store import UsageStore
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +257,7 @@ def test_proxy_route_registered_for_anthropic(
         async def request(self, *a: object, **kw: object) -> _FakeResponse:
             return _FakeResponse()
 
-    monkeypatch.setattr("cachelens.proxy.httpx.AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr("tokenlens.proxy.httpx.AsyncClient", _FakeAsyncClient)
 
     app = create_app(store=store, pricing=pricing)
     with TestClient(app) as tc:
@@ -294,7 +294,7 @@ def test_proxy_route_registered_for_openai(
         async def request(self, *a: object, **kw: object) -> _FakeResponse:
             return _FakeResponse()
 
-    monkeypatch.setattr("cachelens.proxy.httpx.AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr("tokenlens.proxy.httpx.AsyncClient", _FakeAsyncClient)
 
     app = create_app(store=store, pricing=pricing)
     with TestClient(app) as tc:
@@ -330,7 +330,7 @@ def test_proxy_route_registered_for_google(
         async def request(self, *a: object, **kw: object) -> _FakeResponse:
             return _FakeResponse()
 
-    monkeypatch.setattr("cachelens.proxy.httpx.AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr("tokenlens.proxy.httpx.AsyncClient", _FakeAsyncClient)
 
     app = create_app(store=store, pricing=pricing)
     with TestClient(app) as tc:
@@ -382,7 +382,7 @@ def test_proxy_non_streaming_strips_content_encoding(
         async def request(self, *a: object, **kw: object) -> _FakeResponse:
             return _FakeResponse()
 
-    monkeypatch.setattr("cachelens.proxy.httpx.AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr("tokenlens.proxy.httpx.AsyncClient", _FakeAsyncClient)
 
     app = create_app(store=store, pricing=pricing)
     with TestClient(app) as tc:

@@ -1,7 +1,7 @@
 const el = (id) => document.getElementById(id);
 
 // ─── Base path helpers (Tailscale / reverse proxy support) ─────────────────
-// window.BASE_PATH is injected by the server (e.g. "/cachelens"). Empty string
+// window.BASE_PATH is injected by the server (e.g. "/tokenlens"). Empty string
 // when served directly at root.
 const BASE = (window.BASE_PATH || '').replace(/\/$/, '');
 const apiUrl  = (path) => BASE + path;
@@ -353,7 +353,7 @@ function exportJson() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `cachelens-analysis.json`;
+  a.download = `tokenlens-analysis.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -688,7 +688,7 @@ async function backfillLiveFeed() {
     _liveFeedDebug(`[3] ${calls.length} calls, liveFeedLastTs=${liveFeedLastTs}, tbody=${tbody ? 'ok' : 'null'}`);
     if (calls.length === 0) {
       if (tbody && liveFeedLastTs === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-empty">No API calls recorded yet. Route traffic through CacheLens to see activity here.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="table-empty">No API calls recorded yet. Route traffic through TokenLens to see activity here.</td></tr>`;
       }
       return;
     }

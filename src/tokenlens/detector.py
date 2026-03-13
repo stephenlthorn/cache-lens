@@ -1,4 +1,4 @@
-"""Source detector for the CacheLens proxy.
+"""Source detector for the TokenLens proxy.
 
 Parses incoming proxy URLs and request headers to determine the originating
 source (e.g. claude-code, python-httpx, a user-supplied tag).
@@ -9,7 +9,7 @@ URL structure:
 Source detection priority (highest to lowest):
     1. URL tag (sanitized alphanumeric + hyphens, max 64 chars)
     2. User-Agent header pattern matching → canonical name
-    3. X-CacheLens-Source request header → value as-is
+    3. X-TokenLens-Source request header → value as-is
     4. Falls back to "unknown"
 """
 from __future__ import annotations
@@ -218,7 +218,7 @@ def parse_proxy_path(
         if ua_source is not None:
             source = ua_source
         else:
-            custom = _get_header(headers, "X-CacheLens-Source")
+            custom = _get_header(headers, "X-TokenLens-Source")
             source = custom if custom is not None else "unknown"
 
     return ParsedProxy(

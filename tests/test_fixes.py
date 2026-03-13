@@ -1,13 +1,13 @@
 """Tests for all code review fixes."""
 import json
 
-from cachelens.parser import parse_input
-from cachelens.engine.analyzer import analyze
-from cachelens.engine.classifier import classify_static_dynamic, _has_template_angle_brackets
-from cachelens.engine.repeats import split_into_blocks
-from cachelens.engine.waste import build_waste_summary
-from cachelens.engine.helpers import stype, stokens
-from cachelens.models import AnalysisInput, RepeatedBlock, RepeatedBlockLocation, sha256_text
+from tokenlens.parser import parse_input
+from tokenlens.engine.analyzer import analyze
+from tokenlens.engine.classifier import classify_static_dynamic, _has_template_angle_brackets
+from tokenlens.engine.repeats import split_into_blocks
+from tokenlens.engine.waste import build_waste_summary
+from tokenlens.engine.helpers import stype, stokens
+from tokenlens.models import AnalysisInput, RepeatedBlock, RepeatedBlockLocation, sha256_text
 
 
 # --- #1: Double-counting waste ---
@@ -142,7 +142,7 @@ def test_multi_call_all_different_uses_average_tokens():
 
 def test_server_analyze_request_validation():
     """AnalyzeRequest model should validate input."""
-    from cachelens.server import AnalyzeRequest
+    from tokenlens.server import AnalyzeRequest
     from pydantic import ValidationError
 
     # Valid

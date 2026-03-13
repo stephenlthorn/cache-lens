@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 
-from cachelens.store import UsageStore
+from tokenlens.store import UsageStore
 
 
 _IMPACT_ORDER = {"high": 0, "medium": 1, "low": 2}
@@ -153,8 +153,8 @@ def generate_recommendations(store: UsageStore) -> list[Recommendation]:
 
     # Check: right-sizing — sources using expensive models for simple tasks
     try:
-        from cachelens.right_sizing import analyze_right_sizing
-        from cachelens.pricing import PricingTable as _PT
+        from tokenlens.right_sizing import analyze_right_sizing
+        from tokenlens.pricing import PricingTable as _PT
         rs_rows = analyze_right_sizing(store=store, pricing=_PT(), days=30)
         for row in rs_rows:
             if row["simple_pct"] >= 0.5 and row["estimated_savings_usd"] > 0.10:

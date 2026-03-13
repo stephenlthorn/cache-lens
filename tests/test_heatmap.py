@@ -1,7 +1,7 @@
 """Tests for heatmap.py — token section classification."""
 import json
 import pytest
-from cachelens.heatmap import compute_heatmap
+from tokenlens.heatmap import compute_heatmap
 
 
 def test_classifies_system_prompt():

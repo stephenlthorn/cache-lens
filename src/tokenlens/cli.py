@@ -10,7 +10,7 @@ from .engine.analyzer import analyze
 
 @click.group()
 def main() -> None:
-    """CacheLens CLI."""
+    """TokenLens CLI."""
 
 
 @main.command()
@@ -23,8 +23,8 @@ def main() -> None:
     "--sponsor-reminder/--no-sponsor-reminder",
     default=False,
     show_default=True,
-    envvar="CACHELENS_SPONSOR_REMINDER",
-    help="Show a post-run sponsor reminder (human output only). Can also be enabled via CACHELENS_SPONSOR_REMINDER=1.",
+    envvar="TOKENLENS_SPONSOR_REMINDER",
+    help="Show a post-run sponsor reminder (human output only). Can also be enabled via TOKENLENS_SPONSOR_REMINDER=1.",
 )
 def analyze_cmd(file: str, out_format: str, suggestions: bool, score_only: bool, min_tokens: int, sponsor_reminder: bool) -> None:
     """Analyze a prompt/chain/trace from a file path or '-' for stdin."""
@@ -59,7 +59,7 @@ def analyze_cmd(file: str, out_format: str, suggestions: bool, score_only: bool,
         return
 
     # human
-    click.echo("CacheLens Analysis\n══════════════════\n")
+    click.echo("TokenLens Analysis\n══════════════════\n")
     click.echo(f"Score: {result.cacheability_score} / 100 ({result.cacheability_label})")
     click.echo(f"Total input tokens: {result.input_summary.total_input_tokens}")
     click.echo(
@@ -90,7 +90,7 @@ def analyze_cmd(file: str, out_format: str, suggestions: bool, score_only: bool,
         saved_pct_int = int(round(saved_pct))
 
         click.echo("\n—")
-        click.echo(f"CacheLens saved you ~{saved_pct_int}% tokens in this run.")
+        click.echo(f"TokenLens saved you ~{saved_pct_int}% tokens in this run.")
         click.echo("If this tool helps you, consider sponsoring:")
         click.echo("https://github.com/sponsors/stephenlthorn")
 
@@ -98,7 +98,7 @@ def analyze_cmd(file: str, out_format: str, suggestions: bool, score_only: bool,
 @main.command()
 @click.option("--port", type=int, default=8420, show_default=True)
 @click.option("--no-open", is_flag=True, help="Don't auto-open browser")
-@click.option("--base-path", default="", help="URL base path (e.g. /cachelens)")
+@click.option("--base-path", default="", help="URL base path (e.g. /tokenlens)")
 def ui(port: int, no_open: bool, base_path: str) -> None:
     """Launch the local web UI."""
     from .server import run
@@ -108,9 +108,9 @@ def ui(port: int, no_open: bool, base_path: str) -> None:
 
 @main.command()
 @click.option("--port", type=int, default=8420, show_default=True, help="Port to listen on")
-@click.option("--base-path", default="", help="URL base path when behind a reverse proxy (e.g. /cachelens)")
+@click.option("--base-path", default="", help="URL base path when behind a reverse proxy (e.g. /tokenlens)")
 def daemon(port: int, base_path: str) -> None:
-    """Start the CacheLens daemon."""
+    """Start the TokenLens daemon."""
     from .installer import is_port_in_use
 
     if is_port_in_use(port):
@@ -144,7 +144,7 @@ def status(fmt: str, port: int) -> None:
             raw_calls = data.get("raw_calls_today", 0)
             ret = data.get("retention", {})
             last = data.get("last_nightly_rollup") or "never"
-            click.echo(f"CacheLens daemon: {daemon_status} (pid {pid}, port {port})")
+            click.echo(f"TokenLens daemon: {daemon_status} (pid {pid}, port {port})")
             click.echo(f"DB size: {db_mb:.1f} MB")
             click.echo(f"Raw calls today: {raw_calls}")
             click.echo(
@@ -152,14 +152,14 @@ def status(fmt: str, port: int) -> None:
             )
             click.echo(f"Last rollup: {last}")
     except Exception:
-        click.echo("CacheLens daemon: stopped")
+        click.echo("TokenLens daemon: stopped")
 
 
 @main.command("install")
 @click.option("--port", type=int, default=8420, show_default=True, help="Port for the daemon")
-@click.option("--base-path", default="", help="URL base path when behind a reverse proxy (e.g. /cachelens)")
+@click.option("--base-path", default="", help="URL base path when behind a reverse proxy (e.g. /tokenlens)")
 def install_cmd(port: int, base_path: str) -> None:
-    """Install CacheLens as a background service."""
+    """Install TokenLens as a background service."""
     from .installer import install as _install
 
     _install(port=port, base_path=base_path)
@@ -168,7 +168,7 @@ def install_cmd(port: int, base_path: str) -> None:
 @main.command("uninstall")
 @click.option("--purge", is_flag=True, help="Also delete all usage data")
 def uninstall_cmd(purge: bool) -> None:
-    """Uninstall CacheLens."""
+    """Uninstall TokenLens."""
     from .installer import uninstall as _uninstall
 
     _uninstall(purge=purge)

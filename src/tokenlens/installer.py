@@ -10,7 +10,7 @@ from typing import Literal
 
 Platform = Literal["macos", "linux"]
 
-CACHELENS_DIR = Path.home() / ".cachelens"
+TOKENLENS_DIR = Path.home() / ".tokenlens"
 DEFAULT_CONFIG_TOML = """\
 [retention]
 raw_days = 1
@@ -24,12 +24,12 @@ LAUNCHD_PLIST_TEMPLATE = """\
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.cachelens</string>
+    <string>com.tokenlens</string>
     <key>ProgramArguments</key>
     <array>
         <string>{python_path}</string>
         <string>-m</string>
-        <string>cachelens</string>
+        <string>tokenlens</string>
         <string>daemon</string>
         <string>--port</string>
         <string>{port}</string>
@@ -41,9 +41,9 @@ LAUNCHD_PLIST_TEMPLATE = """\
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>{log_dir}/cachelens.log</string>
+    <string>{log_dir}/tokenlens.log</string>
     <key>StandardErrorPath</key>
-    <string>{log_dir}/cachelens.err.log</string>
+    <string>{log_dir}/tokenlens.err.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -55,12 +55,12 @@ LAUNCHD_PLIST_TEMPLATE = """\
 
 SYSTEMD_SERVICE_TEMPLATE = """\
 [Unit]
-Description=CacheLens AI usage tracking daemon
+Description=TokenLens AI usage tracking daemon
 After=network.target
 
 [Service]
 Type=simple
-ExecStart={python_path} -m cachelens daemon --port {port} --base-path {base_path}
+ExecStart={python_path} -m tokenlens daemon --port {port} --base-path {base_path}
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -82,9 +82,9 @@ SHELL_FILES = {
     "profile": Path.home() / ".profile",
 }
 
-# Markers used to delimit cachelens-managed block in shell files
-_CACHELENS_START = "# >>> cachelens >>>"
-_CACHELENS_END = "# <<< cachelens <<<"
+# Markers used to delimit tokenlens-managed block in shell files
+_TOKENLENS_START = "# >>> tokenlens >>>"
+_TOKENLENS_END = "# <<< tokenlens <<<"
 
 
 def detect_platform() -> Platform:
@@ -100,8 +100,8 @@ def is_port_in_use(port: int) -> bool:
 
 
 def get_daemon_pid(port: int = 8420) -> int | None:
-    """Return PID of running cachelens daemon, or None."""
-    pid_file = CACHELENS_DIR / "cachelens.pid"
+    """Return PID of running tokenlens daemon, or None."""
+    pid_file = TOKENLENS_DIR / "tokenlens.pid"
     if pid_file.exists():
         try:
             pid = int(pid_file.read_text().strip())
@@ -122,9 +122,9 @@ def get_daemon_pid(port: int = 8420) -> int | None:
     return None
 
 
-def _build_cachelens_block(port: int, backups: list[str] | None = None) -> str:
+def _build_tokenlens_block(port: int, backups: list[str] | None = None) -> str:
     """Build the shell block of export statements for the given port."""
-    lines = [_CACHELENS_START, ""]
+    lines = [_TOKENLENS_START, ""]
     if backups:
         for b in backups:
             lines.append(b)
@@ -132,7 +132,7 @@ def _build_cachelens_block(port: int, backups: list[str] | None = None) -> str:
     for var, url_template in ENV_VARS.items():
         lines.append(f'export {var}="{url_template.format(port=port)}"')
     lines.append("")
-    lines.append(_CACHELENS_END)
+    lines.append(_TOKENLENS_END)
     return "\n".join(lines)
 
 
@@ -140,20 +140,20 @@ def write_env_to_shell_file(shell_file: Path, port: int) -> None:
     """Write or update env vars in a shell file, backing up existing values."""
     existing_content = shell_file.read_text() if shell_file.exists() else ""
 
-    # Check if cachelens block already exists
-    if _CACHELENS_START in existing_content and _CACHELENS_END in existing_content:
+    # Check if tokenlens block already exists
+    if _TOKENLENS_START in existing_content and _TOKENLENS_END in existing_content:
         # Replace existing block (idempotent update), preserving backup lines
         pattern = re.compile(
-            re.escape(_CACHELENS_START) + r"(.*?)" + re.escape(_CACHELENS_END) + r"\n?",
+            re.escape(_TOKENLENS_START) + r"(.*?)" + re.escape(_TOKENLENS_END) + r"\n?",
             re.DOTALL,
         )
         match = pattern.search(existing_content)
         existing_backups: list[str] = []
         if match:
             for l in match.group(1).splitlines():
-                if "# cachelens-backup:" in l:
+                if "# tokenlens-backup:" in l:
                     existing_backups.append(l.strip())
-        new_block = _build_cachelens_block(port=port, backups=existing_backups or None)
+        new_block = _build_tokenlens_block(port=port, backups=existing_backups or None)
         new_content = pattern.sub(new_block, existing_content)
         shell_file.write_text(new_content)
         return
@@ -169,7 +169,7 @@ def write_env_to_shell_file(shell_file: Path, port: int) -> None:
                 break
         if matched_var is not None:
             value_stripped = line.strip()
-            backup_lines.append(f"# cachelens-backup: {value_stripped}")
+            backup_lines.append(f"# tokenlens-backup: {value_stripped}")
         else:
             cleaned_lines.append(line)
 
@@ -178,25 +178,25 @@ def write_env_to_shell_file(shell_file: Path, port: int) -> None:
     if base and not base.endswith("\n"):
         base += "\n"
 
-    block = _build_cachelens_block(port=port, backups=backup_lines or None)
+    block = _build_tokenlens_block(port=port, backups=backup_lines or None)
 
     shell_file.write_text(base + block)
 
 
 def remove_env_from_shell_file(shell_file: Path) -> None:
-    """Remove cachelens env vars from a shell file, restoring backed-up values."""
+    """Remove tokenlens env vars from a shell file, restoring backed-up values."""
     if not shell_file.exists():
         return
 
     content = shell_file.read_text()
 
-    if _CACHELENS_START not in content:
+    if _TOKENLENS_START not in content:
         # Nothing to remove
         return
 
-    # Extract the cachelens block
+    # Extract the tokenlens block
     pattern = re.compile(
-        re.escape(_CACHELENS_START) + r"(.*?)" + re.escape(_CACHELENS_END) + r"\n?",
+        re.escape(_TOKENLENS_START) + r"(.*?)" + re.escape(_TOKENLENS_END) + r"\n?",
         re.DOTALL,
     )
     match = pattern.search(content)
@@ -205,8 +205,8 @@ def remove_env_from_shell_file(shell_file: Path) -> None:
         block_inner = match.group(1)
         for line in block_inner.splitlines():
             stripped = line.strip()
-            if stripped.startswith("# cachelens-backup:"):
-                original = stripped.removeprefix("# cachelens-backup:").strip()
+            if stripped.startswith("# tokenlens-backup:"):
+                original = stripped.removeprefix("# tokenlens-backup:").strip()
                 restore_lines.append(original)
 
     # Remove the block from content
@@ -225,8 +225,8 @@ def _write_macos_plist(port: int, base_path: str = "") -> Path:
     """Write LaunchAgent plist and return its path."""
     launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
     launch_agents_dir.mkdir(parents=True, exist_ok=True)
-    plist_path = launch_agents_dir / "com.cachelens.plist"
-    log_dir = CACHELENS_DIR / "logs"
+    plist_path = launch_agents_dir / "com.tokenlens.plist"
+    log_dir = TOKENLENS_DIR / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     plist_content = LAUNCHD_PLIST_TEMPLATE.format(
         python_path=sys.executable,
@@ -243,7 +243,7 @@ def _write_linux_service(port: int, base_path: str = "") -> Path:
     """Write systemd user service and return its path."""
     systemd_dir = Path.home() / ".config" / "systemd" / "user"
     systemd_dir.mkdir(parents=True, exist_ok=True)
-    service_path = systemd_dir / "cachelens.service"
+    service_path = systemd_dir / "tokenlens.service"
     service_content = SYSTEMD_SERVICE_TEMPLATE.format(
         python_path=sys.executable,
         port=port,
@@ -257,9 +257,9 @@ def install(port: int = 8420, base_path: str = "") -> None:
     """Run the full install sequence. Print each step."""
     platform = detect_platform()
 
-    # 1. Create ~/.cachelens/ and default config
-    CACHELENS_DIR.mkdir(parents=True, exist_ok=True)
-    config_path = CACHELENS_DIR / "config.toml"
+    # 1. Create ~/.tokenlens/ and default config
+    TOKENLENS_DIR.mkdir(parents=True, exist_ok=True)
+    config_path = TOKENLENS_DIR / "config.toml"
     if not config_path.exists():
         config_path.write_text(DEFAULT_CONFIG_TOML)
         print(f"  Created {config_path}")
@@ -300,13 +300,13 @@ def install(port: int = 8420, base_path: str = "") -> None:
             print(f"  Warning: could not start daemon via launchctl: {exc}")
     else:
         try:
-            subprocess.run(["systemctl", "--user", "enable", "--now", "cachelens.service"], check=True, capture_output=True)
+            subprocess.run(["systemctl", "--user", "enable", "--now", "tokenlens.service"], check=True, capture_output=True)
             print("  Started daemon via systemctl")
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
             print(f"  Warning: could not start daemon via systemctl: {exc}")
 
     # 5. Print summary
-    print("\nCacheLens installed successfully.")
+    print("\nTokenLens installed successfully.")
     print(f"  Port: {port}")
     print(f"  Config: {config_path}")
     print(f"  Service: {service_path}")
@@ -325,7 +325,7 @@ def uninstall(purge: bool = False) -> None:
 
     # Stop and remove service
     if platform == "macos":
-        plist_path = Path.home() / "Library" / "LaunchAgents" / "com.cachelens.plist"
+        plist_path = Path.home() / "Library" / "LaunchAgents" / "com.tokenlens.plist"
         if plist_path.exists():
             try:
                 subprocess.run(["launchctl", "unload", str(plist_path)], check=False, capture_output=True)
@@ -337,10 +337,10 @@ def uninstall(purge: bool = False) -> None:
         else:
             print("  No LaunchAgent plist found (already removed)")
     else:
-        service_path = Path.home() / ".config" / "systemd" / "user" / "cachelens.service"
+        service_path = Path.home() / ".config" / "systemd" / "user" / "tokenlens.service"
         if service_path.exists():
             try:
-                subprocess.run(["systemctl", "--user", "disable", "--now", "cachelens.service"], check=False, capture_output=True)
+                subprocess.run(["systemctl", "--user", "disable", "--now", "tokenlens.service"], check=False, capture_output=True)
                 print("  Stopped and disabled systemd service")
             except FileNotFoundError:
                 pass
@@ -364,13 +364,13 @@ def uninstall(purge: bool = False) -> None:
                 pass
 
     # Purge data directory if requested
-    if purge and CACHELENS_DIR.exists():
+    if purge and TOKENLENS_DIR.exists():
         import shutil
-        shutil.rmtree(CACHELENS_DIR)
-        print(f"  Purged data directory: {CACHELENS_DIR}")
+        shutil.rmtree(TOKENLENS_DIR)
+        print(f"  Purged data directory: {TOKENLENS_DIR}")
     else:
-        print(f"  Data directory preserved: {CACHELENS_DIR}")
+        print(f"  Data directory preserved: {TOKENLENS_DIR}")
 
-    print("\nCacheLens uninstalled.")
+    print("\nTokenLens uninstalled.")
     if not purge:
         print("  Run with --purge to also delete usage data.")

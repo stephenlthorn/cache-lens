@@ -1,6 +1,6 @@
 """Tests for waste_detector.py — junk token detection."""
 import pytest
-from cachelens.waste_detector import detect_waste, WasteItem
+from tokenlens.waste_detector import detect_waste, WasteItem
 
 
 def _make_request(messages, max_tokens=None, tools=None):

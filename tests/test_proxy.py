@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cachelens.proxy import (
+from tokenlens.proxy import (
     _filter_response_headers,
     _record_call,
     extract_usage_from_response,
@@ -357,7 +357,7 @@ def test_filter_response_headers_empty_dict():
 # ---------------------------------------------------------------------------
 
 def test_record_call_uses_upstream_path_as_endpoint():
-    from cachelens.detector import ParsedProxy
+    from tokenlens.detector import ParsedProxy
 
     store = MagicMock()
     pricing = MagicMock()
@@ -449,8 +449,8 @@ class _FakeClient:
 def test_upstream_stream_response_forwards_upstream_429_status():
     """_UpstreamStreamResponse must forward upstream HTTP 429 status to client."""
     import asyncio
-    from cachelens.proxy import _UpstreamStreamResponse
-    from cachelens.detector import ParsedProxy
+    from tokenlens.proxy import _UpstreamStreamResponse
+    from tokenlens.detector import ParsedProxy
     from unittest.mock import MagicMock
 
     parsed = ParsedProxy(
@@ -467,7 +467,7 @@ def test_upstream_stream_response_forwards_upstream_429_status():
     fake_client = _FakeClient(stream_cm)
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("cachelens.proxy.httpx.AsyncClient", lambda **kw: fake_client)
+        mp.setattr("tokenlens.proxy.httpx.AsyncClient", lambda **kw: fake_client)
         asgi_resp = _UpstreamStreamResponse(
             method="POST",
             url="https://api.anthropic.com/v1/messages",
@@ -489,8 +489,8 @@ def test_upstream_stream_response_forwards_upstream_429_status():
 def test_upstream_stream_response_forwards_upstream_headers():
     """_UpstreamStreamResponse must forward upstream headers to client."""
     import asyncio
-    from cachelens.proxy import _UpstreamStreamResponse
-    from cachelens.detector import ParsedProxy
+    from tokenlens.proxy import _UpstreamStreamResponse
+    from tokenlens.detector import ParsedProxy
     from unittest.mock import MagicMock
 
     parsed = ParsedProxy(
@@ -507,7 +507,7 @@ def test_upstream_stream_response_forwards_upstream_headers():
     fake_client = _FakeClient(stream_cm)
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("cachelens.proxy.httpx.AsyncClient", lambda **kw: fake_client)
+        mp.setattr("tokenlens.proxy.httpx.AsyncClient", lambda **kw: fake_client)
         asgi_resp = _UpstreamStreamResponse(
             method="POST",
             url="https://api.openai.com/v1/chat/completions",
@@ -536,8 +536,8 @@ def test_upstream_stream_response_strips_content_encoding():
     (e.g. Claude Code) to attempt double-decompression → zlib error.
     """
     import asyncio
-    from cachelens.proxy import _UpstreamStreamResponse
-    from cachelens.detector import ParsedProxy
+    from tokenlens.proxy import _UpstreamStreamResponse
+    from tokenlens.detector import ParsedProxy
 
     parsed = ParsedProxy(
         provider="anthropic",
@@ -558,7 +558,7 @@ def test_upstream_stream_response_strips_content_encoding():
     fake_client = _FakeClient(stream_cm)
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("cachelens.proxy.httpx.AsyncClient", lambda **kw: fake_client)
+        mp.setattr("tokenlens.proxy.httpx.AsyncClient", lambda **kw: fake_client)
         asgi_resp = _UpstreamStreamResponse(
             method="POST",
             url="https://api.anthropic.com/v1/messages",
@@ -583,7 +583,7 @@ def test_upstream_stream_response_strips_content_encoding():
 
 
 def test_record_call_does_not_store_full_url_as_endpoint():
-    from cachelens.detector import ParsedProxy
+    from tokenlens.detector import ParsedProxy
 
     store = MagicMock()
     pricing = MagicMock()
@@ -619,10 +619,10 @@ def test_record_call_does_not_store_full_url_as_endpoint():
 
 def test_record_call_returns_event_with_id(tmp_path):
     """_record_call must return event dict that includes 'id' field."""
-    from cachelens.store import UsageStore
-    from cachelens.pricing import PricingTable
-    from cachelens.proxy import _record_call
-    from cachelens.detector import ParsedProxy
+    from tokenlens.store import UsageStore
+    from tokenlens.pricing import PricingTable
+    from tokenlens.proxy import _record_call
+    from tokenlens.detector import ParsedProxy
 
     store = UsageStore(tmp_path / "test.db")
     pricing = PricingTable()
@@ -642,9 +642,9 @@ def test_record_call_returns_event_with_id(tmp_path):
 def test_proxy_records_waste_items(tmp_path):
     """Waste items from detect_waste are stored in call_waste table after a non-streaming call."""
     import asyncio
-    from cachelens.store import UsageStore
-    from cachelens.pricing import PricingTable
-    from cachelens.proxy import handle_proxy_request
+    from tokenlens.store import UsageStore
+    from tokenlens.pricing import PricingTable
+    from tokenlens.proxy import handle_proxy_request
 
     store = UsageStore(tmp_path / "test.db")
     pricing = PricingTable()
@@ -697,9 +697,9 @@ def test_proxy_history_metrics_list_content(tmp_path):
     are properly tokenized when computing history metrics.
     """
     import asyncio
-    from cachelens.store import UsageStore
-    from cachelens.pricing import PricingTable
-    from cachelens.proxy import handle_proxy_request
+    from tokenlens.store import UsageStore
+    from tokenlens.pricing import PricingTable
+    from tokenlens.proxy import handle_proxy_request
 
     store = UsageStore(tmp_path / "test.db")
     pricing = PricingTable()

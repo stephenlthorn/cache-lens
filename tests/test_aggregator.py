@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from datetime import date, datetime, timedelta
 
-from cachelens.store import UsageStore
-from cachelens.aggregator import (
+from tokenlens.store import UsageStore
+from tokenlens.aggregator import (
     _do_nightly_rollup,
     _do_yearly_rollup,
     _seconds_until,
@@ -297,7 +297,7 @@ def test_seconds_until_future_time() -> None:
     from datetime import datetime as _dt
 
     fixed_now = _dt(2025, 6, 15, 10, 0, 0)
-    with patch("cachelens.aggregator.datetime") as mock_dt:
+    with patch("tokenlens.aggregator.datetime") as mock_dt:
         mock_dt.now.return_value = fixed_now
         # 11:30 is in the future today
         secs = _seconds_until(11, 30)
@@ -309,7 +309,7 @@ def test_seconds_until_past_time_returns_tomorrow() -> None:
     from datetime import datetime as _dt
 
     fixed_now = _dt(2025, 6, 15, 10, 0, 0)
-    with patch("cachelens.aggregator.datetime") as mock_dt:
+    with patch("tokenlens.aggregator.datetime") as mock_dt:
         mock_dt.now.return_value = fixed_now
         # 09:00 already passed today
         secs = _seconds_until(9, 0)
@@ -325,7 +325,7 @@ def test_run_startup_recovery_skips_yearly_rollup_on_jan_1(store: UsageStore) ->
     from unittest.mock import patch
     from datetime import date as _date
 
-    with patch("cachelens.aggregator.date") as mock_date:
+    with patch("tokenlens.aggregator.date") as mock_date:
         mock_date.today.return_value = _date(2025, 1, 1)
         mock_date.side_effect = lambda *a, **kw: _date(*a, **kw)
         run_startup_recovery(store)
@@ -351,7 +351,7 @@ def test_run_startup_recovery_runs_yearly_rollup_on_jan_2(store: UsageStore) -> 
         cost_usd=0.01,
     )
 
-    with patch("cachelens.aggregator.date") as mock_date:
+    with patch("tokenlens.aggregator.date") as mock_date:
         mock_date.today.return_value = _date(2025, 1, 2)
         mock_date.side_effect = lambda *a, **kw: _date(*a, **kw)
         run_startup_recovery(store)

@@ -1,5 +1,5 @@
 import pytest
-from cachelens.pricing import PricingTable
+from tokenlens.pricing import PricingTable
 
 
 def test_known_model_returns_correct_cost():

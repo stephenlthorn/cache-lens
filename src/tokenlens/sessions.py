@@ -1,4 +1,4 @@
-"""Per-session cost tracking for CacheLens.
+"""Per-session cost tracking for TokenLens.
 
 Groups raw API calls into sessions based on time gaps. A session is a
 contiguous sequence of calls from the same source where the gap between

@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from cachelens.installer import (
+from tokenlens.installer import (
     write_env_to_shell_file,
     remove_env_from_shell_file,
     is_port_in_use,
@@ -66,7 +66,7 @@ def test_remove_env_restores_backed_up_value(tmp_path):
     assert "old-proxy.example.com" in content
 
 
-def test_remove_env_from_file_with_no_cachelens_vars(tmp_path):
+def test_remove_env_from_file_with_no_tokenlens_vars(tmp_path):
     shell_file = tmp_path / ".zshrc"
     shell_file.write_text('export PATH="/usr/local/bin:$PATH"\n')
     remove_env_from_shell_file(shell_file)  # should not raise
@@ -74,7 +74,7 @@ def test_remove_env_from_file_with_no_cachelens_vars(tmp_path):
     assert 'PATH="/usr/local/bin:$PATH"' in content
 
 
-def test_remove_env_removes_cachelens_block(tmp_path):
+def test_remove_env_removes_tokenlens_block(tmp_path):
     shell_file = tmp_path / ".zshrc"
     write_env_to_shell_file(shell_file, port=8420)
     remove_env_from_shell_file(shell_file)
@@ -125,4 +125,4 @@ def test_write_env_backup_stored_as_comment(tmp_path):
     shell_file.write_text('export ANTHROPIC_BASE_URL="https://old.example.com"\n')
     write_env_to_shell_file(shell_file, port=8420)
     content = shell_file.read_text()
-    assert "# cachelens-backup:" in content
+    assert "# tokenlens-backup:" in content

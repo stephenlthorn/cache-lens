@@ -30,7 +30,7 @@ from .store import UsageStore
 from .webhooks import dispatch_webhook, should_fire_webhook
 
 # Default DB path used when no store is injected (production mode)
-DEFAULT_DB_PATH: Path = Path.home() / ".cachelens" / "usage.db"
+DEFAULT_DB_PATH: Path = Path.home() / ".tokenlens" / "usage.db"
 
 _WS_MAX_CONNECTIONS = 10
 
@@ -107,7 +107,7 @@ def create_app(
         async with _lifespan(app, _store, _pricing):
             yield
 
-    app = FastAPI(title="CacheLens", lifespan=lifespan)
+    app = FastAPI(title="TokenLens", lifespan=lifespan)
     # Store port on app for /api/status
     app.state.port = port
 
@@ -380,7 +380,7 @@ def create_app(
                 f"{r.get('cost_usd', 0.0):.6f}", f"{r.get('savings_usd', 0.0):.6f}",
             ])
 
-        filename = f"cachelens-export-{date.today().isoformat()}.csv"
+        filename = f"tokenlens-export-{date.today().isoformat()}.csv"
         return Response(
             content=buf.getvalue(),
             media_type="text/csv",
@@ -737,13 +737,13 @@ def create_app(
 
     @app.get("/api/usage/anomalies")
     def api_anomalies(request: Request, days: int = 30) -> JSONResponse:
-        from cachelens.anomaly import detect_anomalies
+        from tokenlens.anomaly import detect_anomalies
         s: UsageStore = request.app.state.store
         return JSONResponse(content=detect_anomalies(store=s, days=days))
 
     @app.get("/api/usage/right-sizing")
     def api_right_sizing(request: Request, days: int = 30) -> JSONResponse:
-        from cachelens.right_sizing import analyze_right_sizing
+        from tokenlens.right_sizing import analyze_right_sizing
         s: UsageStore = request.app.state.store
         p: PricingTable = request.app.state.pricing
         return JSONResponse(content=analyze_right_sizing(store=s, pricing=p, days=days))
@@ -824,7 +824,7 @@ def create_app(
 
     @app.get("/metrics")
     def api_metrics(request: Request) -> Response:
-        from cachelens.metrics import render_prometheus_metrics
+        from tokenlens.metrics import render_prometheus_metrics
         s: UsageStore = request.app.state.store
         return Response(
             content=render_prometheus_metrics(s),

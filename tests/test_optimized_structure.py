@@ -1,5 +1,5 @@
-from cachelens.parser import parse_input
-from cachelens.engine.analyzer import analyze
+from tokenlens.parser import parse_input
+from tokenlens.engine.analyzer import analyze
 
 
 def test_repeated_block_detected():

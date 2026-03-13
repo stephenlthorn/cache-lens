@@ -1,4 +1,4 @@
-"""Model right-sizing analysis for CacheLens v2.
+"""Model right-sizing analysis for TokenLens v2.
 
 Scores each call's complexity based on observable features,
 then recommends downgrade for simple/moderate calls on expensive models.
@@ -8,8 +8,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from cachelens.pricing import PricingTable
-from cachelens.store import UsageStore
+from tokenlens.pricing import PricingTable
+from tokenlens.store import UsageStore
 
 # Downgrade map: (current_model) -> {simple: cheaper, moderate: keep_or_cheaper}
 _DOWNGRADE_MAP: dict[str, dict[str, str | None]] = {

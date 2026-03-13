@@ -1,15 +1,15 @@
-# CacheLens
+# TokenLens
 
 **AI cost intelligence — local-first.**
 
-CacheLens is a transparent proxy + dashboard that tracks every AI API call, shows you exactly where your money goes, and finds ways to spend less.
+TokenLens is a transparent proxy + dashboard that tracks every AI API call, shows you exactly where your money goes, and finds ways to spend less.
 
 - **Zero config** — install, point your SDK, done
 - **100% local** — your data never leaves your machine
 - **Real-time** — live WebSocket feed of every API call
 - **Works with** Anthropic, OpenAI, and Google AI
 
-![CacheLens Dashboard](docs/dashboard.png)
+![TokenLens Dashboard](docs/dashboard.png)
 
 ---
 
@@ -17,22 +17,22 @@ CacheLens is a transparent proxy + dashboard that tracks every AI API call, show
 
 ```bash
 # 1. Install
-pip install cachelens        # or: pipx install cachelens
+pip install tokenlens        # or: pipx install tokenlens
 
 # 2. Set up as background service (auto-starts on boot)
-cachelens install
+tokenlens install
 
 # 3. Open dashboard
-cachelens ui
+tokenlens ui
 ```
 
-That's it. Your shell now has `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, and `GOOGLE_AI_BASE_URL` pointed at the CacheLens proxy. Every SDK call flows through CacheLens automatically.
+That's it. Your shell now has `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, and `GOOGLE_AI_BASE_URL` pointed at the TokenLens proxy. Every SDK call flows through TokenLens automatically.
 
 ### Manual setup (without daemon)
 
 ```bash
 # Start the server
-cachelens ui --port 8420
+tokenlens ui --port 8420
 
 # Point your SDK at the proxy
 export ANTHROPIC_BASE_URL="http://localhost:8420/proxy/anthropic"
@@ -95,12 +95,12 @@ export OPENAI_BASE_URL="http://localhost:8420/proxy/openai"
 ## CLI Reference
 
 ```
-cachelens install             # Install as background service
-cachelens uninstall [--purge] # Remove service (--purge deletes data)
-cachelens ui [--port 8420]    # Open dashboard in browser
-cachelens daemon              # Run in foreground (for debugging)
-cachelens status              # Show daemon status
-cachelens analyze <file|->    # Analyze a prompt trace for waste
+tokenlens install             # Install as background service
+tokenlens uninstall [--purge] # Remove service (--purge deletes data)
+tokenlens ui [--port 8420]    # Open dashboard in browser
+tokenlens daemon              # Run in foreground (for debugging)
+tokenlens status              # Show daemon status
+tokenlens analyze <file|->    # Analyze a prompt trace for waste
 ```
 
 ### Analyze options
@@ -163,10 +163,10 @@ All endpoints are served at `http://localhost:8420` (default port).
 
 ## Configuration
 
-CacheLens stores its data in `~/.cachelens/`:
+TokenLens stores its data in `~/.tokenlens/`:
 
 ```
-~/.cachelens/
+~/.tokenlens/
   usage.db        # SQLite database (all usage data)
   config.toml     # Retention settings
   logs/           # Daemon logs
@@ -193,7 +193,7 @@ CacheLens stores its data in `~/.cachelens/`:
 ## How It Works
 
 ```
-Your App → SDK → CacheLens Proxy (localhost:8420) → AI Provider
+Your App → SDK → TokenLens Proxy (localhost:8420) → AI Provider
                       ↓
               Records every call
               Calculates cost
@@ -203,7 +203,7 @@ Your App → SDK → CacheLens Proxy (localhost:8420) → AI Provider
               Dashboard + API + Alerts
 ```
 
-CacheLens acts as a transparent HTTP proxy. It intercepts API calls, records token usage and cost, then forwards them to the real provider. Responses stream back untouched. The dashboard reads from a local SQLite database — nothing leaves your machine.
+TokenLens acts as a transparent HTTP proxy. It intercepts API calls, records token usage and cost, then forwards them to the real provider. Responses stream back untouched. The dashboard reads from a local SQLite database — nothing leaves your machine.
 
 ---
 
@@ -226,7 +226,7 @@ python3 -m pytest tests/ -v
 
 ## Sponsorship
 
-If CacheLens helps you ship faster or cut token spend, consider sponsoring:
+If TokenLens helps you ship faster or cut token spend, consider sponsoring:
 
 https://github.com/sponsors/stephenlthorn
 

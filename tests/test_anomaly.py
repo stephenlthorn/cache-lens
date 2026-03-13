@@ -11,7 +11,7 @@ def _make_store_with_agg(rows):
 
 
 def test_no_anomalies_with_stable_spend():
-    from cachelens.anomaly import detect_anomalies
+    from tokenlens.anomaly import detect_anomalies
     from datetime import date, timedelta
 
     today = date.today()
@@ -30,7 +30,7 @@ def test_no_anomalies_with_stable_spend():
 
 
 def test_detects_spend_spike():
-    from cachelens.anomaly import detect_anomalies
+    from tokenlens.anomaly import detect_anomalies
     from datetime import date, timedelta
 
     today = date.today()
@@ -60,7 +60,7 @@ def test_detects_spend_spike():
 
 def test_detects_call_count_spike():
     """Call count spike (> 2x normal) should also be flagged."""
-    from cachelens.anomaly import detect_anomalies
+    from tokenlens.anomaly import detect_anomalies
     from datetime import date, timedelta
 
     today = date.today()
@@ -88,7 +88,7 @@ def test_detects_call_count_spike():
 
 def test_detects_token_spike():
     """Avg token spike (> 2x normal input_tokens/call) should be flagged."""
-    from cachelens.anomaly import detect_anomalies
+    from tokenlens.anomaly import detect_anomalies
     from datetime import date, timedelta
 
     today = date.today()
@@ -115,7 +115,7 @@ def test_detects_token_spike():
 
 
 def test_anomaly_has_required_fields():
-    from cachelens.anomaly import detect_anomalies
+    from tokenlens.anomaly import detect_anomalies
     from datetime import date, timedelta
 
     today = date.today()
@@ -145,7 +145,7 @@ def test_anomaly_has_required_fields():
 
 def test_anomaly_drill_down_fields():
     """Anomaly result must include drill-down: top_models and call_count."""
-    from cachelens.anomaly import detect_anomalies
+    from tokenlens.anomaly import detect_anomalies
     from datetime import date, timedelta
 
     today = date.today()
@@ -168,7 +168,7 @@ def test_anomaly_drill_down_fields():
 
 
 def test_insufficient_data_returns_empty():
-    from cachelens.anomaly import detect_anomalies
+    from tokenlens.anomaly import detect_anomalies
     # Need at least 7 days of data to detect anomalies
     store = _make_store_with_agg([])
     anomalies = detect_anomalies(store=store, days=14)

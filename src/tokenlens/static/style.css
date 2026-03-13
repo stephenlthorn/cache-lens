@@ -190,19 +190,22 @@ h2,h3{
   letter-spacing: .6px;
   font-weight: 500;
 }
-.kpi-value{
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--text-bright);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.5px;
-}
 .kpi-savings{
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 32px;
+  font-weight: 700;
   color: var(--neon);
   text-shadow: var(--neon-glow);
-  margin-top: 2px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.5px;
+  line-height: 1.1;
+}
+.kpi-spent{
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
   font-family: var(--mono);
 }
 

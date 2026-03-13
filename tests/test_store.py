@@ -2,7 +2,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from cachelens.store import UsageStore
+from tokenlens.store import UsageStore
 
 
 @pytest.fixture

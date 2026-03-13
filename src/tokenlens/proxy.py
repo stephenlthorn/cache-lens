@@ -1,4 +1,4 @@
-"""HTTP proxy handler for CacheLens.
+"""HTTP proxy handler for TokenLens.
 
 Intercepts AI API calls at /proxy/<provider>[/<tag>]/<upstream-path>,
 forwards them to the real provider API, and records usage metrics.
@@ -14,11 +14,11 @@ from typing import Any, AsyncIterator
 import httpx
 from fastapi.responses import Response
 
-from cachelens.detector import ParsedProxy, parse_proxy_path
-from cachelens.heatmap import compute_heatmap
-from cachelens.pricing import PricingTable
-from cachelens.store import UsageStore
-from cachelens.waste_detector import detect_waste, WasteItem
+from tokenlens.detector import ParsedProxy, parse_proxy_path
+from tokenlens.heatmap import compute_heatmap
+from tokenlens.pricing import PricingTable
+from tokenlens.store import UsageStore
+from tokenlens.waste_detector import detect_waste, WasteItem
 
 # ---------------------------------------------------------------------------
 # Provider base URLs
@@ -345,7 +345,7 @@ async def handle_proxy_request(
                 return Response(
                     status_code=429,
                     content=json.dumps({
-                        "error": "CacheLens daily budget exceeded",
+                        "error": "TokenLens daily budget exceeded",
                         "daily_spend_usd": store.daily_spend_usd(),
                         "daily_limit_usd": daily_limit,
                     }).encode(),
@@ -358,7 +358,7 @@ async def handle_proxy_request(
                 return Response(
                     status_code=429,
                     content=json.dumps({
-                        "error": "CacheLens monthly budget exceeded",
+                        "error": "TokenLens monthly budget exceeded",
                         "monthly_spend_usd": store.monthly_spend_usd(),
                         "monthly_limit_usd": monthly_limit,
                     }).encode(),
@@ -479,7 +479,7 @@ async def handle_proxy_request(
         cached = store.get_cached_response(request_hash)
         if cached is not None:
             cached_headers = json.loads(cached["response_headers"])
-            cached_headers["X-CacheLens-Cache"] = "HIT"
+            cached_headers["X-TokenLens-Cache"] = "HIT"
             return Response(
                 content=cached["response_body"],
                 status_code=cached["response_status"],

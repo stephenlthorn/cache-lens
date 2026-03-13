@@ -1,6 +1,6 @@
 """Tests for cacheability scoring and labels."""
-from cachelens.parser import parse_input
-from cachelens.engine.analyzer import analyze
+from tokenlens.parser import parse_input
+from tokenlens.engine.analyzer import analyze
 
 
 def test_score_excellent():

@@ -1,6 +1,6 @@
-from cachelens.parser import parse_input
-from cachelens.engine.analyzer import analyze
-from cachelens.engine.classifier import classify_static_dynamic
+from tokenlens.parser import parse_input
+from tokenlens.engine.analyzer import analyze
+from tokenlens.engine.classifier import classify_static_dynamic
 
 
 def test_multi_call_static_detection():

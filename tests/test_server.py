@@ -1,4 +1,4 @@
-"""Tests for the extended CacheLens FastAPI server.
+"""Tests for the extended TokenLens FastAPI server.
 
 Covers:
 - Existing /api/analyze endpoint (regression)
@@ -19,9 +19,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cachelens.pricing import PricingTable
-from cachelens.server import create_app
-from cachelens.store import UsageStore
+from tokenlens.pricing import PricingTable
+from tokenlens.server import create_app
+from tokenlens.store import UsageStore
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +434,7 @@ def test_csv_export_content_disposition(client: TestClient) -> None:
     """GET /api/export/csv has proper Content-Disposition header."""
     response = client.get("/api/export/csv")
     assert "attachment" in response.headers.get("Content-Disposition", "")
-    assert "cachelens-export" in response.headers.get("Content-Disposition", "")
+    assert "tokenlens-export" in response.headers.get("Content-Disposition", "")
 
 
 # ---------------------------------------------------------------------------
@@ -965,7 +965,7 @@ def test_proxy_route_known_provider_route_is_registered(
         async def request(self, *a: object, **kw: object) -> _FakeResponse:
             return _FakeResponse()
 
-    monkeypatch.setattr("cachelens.proxy.httpx.AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr("tokenlens.proxy.httpx.AsyncClient", _FakeAsyncClient)
 
     app = create_app(store=test_store, pricing=pricing)
     with TestClient(app) as tc:

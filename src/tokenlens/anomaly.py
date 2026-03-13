@@ -1,4 +1,4 @@
-"""Cost anomaly detection for CacheLens v2.
+"""Cost anomaly detection for TokenLens v2.
 
 Algorithm:
   - Compute 14-day rolling mean and stddev of daily spend per source
@@ -11,7 +11,7 @@ import math
 from datetime import date, timedelta
 from typing import Any
 
-from cachelens.store import UsageStore
+from tokenlens.store import UsageStore
 
 
 def _mean_stddev(values: list[float]) -> tuple[float, float]:

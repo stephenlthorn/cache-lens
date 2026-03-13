@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 
 def test_simple_call_classified_simple():
-    from cachelens.right_sizing import score_complexity
+    from tokenlens.right_sizing import score_complexity
     call = {
         "input_tokens": 100, "output_tokens": 50,
         "message_count": 2, "token_heatmap": None,
@@ -13,7 +13,7 @@ def test_simple_call_classified_simple():
 
 
 def test_complex_call_classified_complex():
-    from cachelens.right_sizing import score_complexity
+    from tokenlens.right_sizing import score_complexity
     call = {
         "input_tokens": 5000, "output_tokens": 800,
         "message_count": 8, "token_heatmap": '{"tool_definitions": 1000}',
@@ -23,7 +23,7 @@ def test_complex_call_classified_complex():
 
 
 def test_moderate_call_classification():
-    from cachelens.right_sizing import score_complexity
+    from tokenlens.right_sizing import score_complexity
     call = {
         "input_tokens": 2500, "output_tokens": 400,
         "message_count": 4, "token_heatmap": None,
@@ -33,8 +33,8 @@ def test_moderate_call_classification():
 
 
 def test_right_sizing_report_structure():
-    from cachelens.right_sizing import analyze_right_sizing
-    from cachelens.pricing import PricingTable
+    from tokenlens.right_sizing import analyze_right_sizing
+    from tokenlens.pricing import PricingTable
 
     pricing = PricingTable()
     store = MagicMock()
@@ -58,8 +58,8 @@ def test_right_sizing_report_structure():
 
 
 def test_right_sizing_no_savings_for_haiku():
-    from cachelens.right_sizing import analyze_right_sizing
-    from cachelens.pricing import PricingTable
+    from tokenlens.right_sizing import analyze_right_sizing
+    from tokenlens.pricing import PricingTable
 
     pricing = PricingTable()
     store = MagicMock()

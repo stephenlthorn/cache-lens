@@ -2,8 +2,8 @@ import time
 
 import pytest
 from datetime import date, timedelta
-from cachelens.store import UsageStore
-from cachelens.recommender import generate_recommendations, Recommendation
+from tokenlens.store import UsageStore
+from tokenlens.recommender import generate_recommendations, Recommendation
 
 
 @pytest.fixture

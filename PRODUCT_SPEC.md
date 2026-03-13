@@ -1,10 +1,10 @@
-# CacheLens — Product Design Spec v1.0
+# TokenLens — Product Design Spec v1.0
 
 ---
 
 # 1. Product Summary
 
-**CacheLens** is a local-first CLI and web tool that analyzes AI prompts, prompt chains, and agent traces to find token waste and generate concrete optimization suggestions.
+**TokenLens** is a local-first CLI and web tool that analyzes AI prompts, prompt chains, and agent traces to find token waste and generate concrete optimization suggestions.
 
 **For:** Indie builders, home lab operators, and small teams running LLM-powered workflows who are spending more on tokens than they should be.
 
@@ -26,8 +26,8 @@
 - Cacheability score (0-100)
 - Waste summary with ranked sources
 - Concrete restructuring suggestions
-- Local web UI (`uvx cachelens ui`)
-- CLI with JSON output (`uvx cachelens analyze`)
+- Local web UI (`uvx tokenlens ui`)
+- CLI with JSON output (`uvx tokenlens analyze`)
 - Zero backend — everything runs locally in-process
 
 ## Explicitly excluded from V1
@@ -498,7 +498,7 @@ Each suggestion includes:
 
 | Step | User Intent | System Behavior |
 |------|-------------|-----------------|
-| 1 | Launch tool | `uvx cachelens ui` → opens browser at `localhost:8420`. Show landing page with input area. |
+| 1 | Launch tool | `uvx tokenlens ui` → opens browser at `localhost:8420`. Show landing page with input area. |
 | 2 | Understand what to do | Landing page shows: large text area with placeholder "Paste a prompt, message chain, or JSON trace...", plus a "Load example" link and a file upload button. |
 | 3 | Try with example | User clicks "Load example" → pre-populated example trace appears in text area. |
 | 4 | Run analysis | User clicks "Analyze" button → 1-3 second processing → redirect to results view. |
@@ -528,19 +528,19 @@ V1 does not persist analyses between sessions. The tool is stateless.
 
 ```bash
 # Analyze a file
-uvx cachelens analyze trace.json
+uvx tokenlens analyze trace.json
 
 # Analyze with JSON output
-uvx cachelens analyze trace.json --format json
+uvx tokenlens analyze trace.json --format json
 
 # Analyze from stdin
-cat trace.json | uvx cachelens analyze --format json
+cat trace.json | uvx tokenlens analyze --format json
 
 # Analyze raw text
-uvx cachelens analyze prompt.txt
+uvx tokenlens analyze prompt.txt
 
 # Get just the score
-uvx cachelens analyze trace.json --format json | jq '.cacheability_score'
+uvx tokenlens analyze trace.json --format json | jq '.cacheability_score'
 ```
 
 | Step | User Intent | System Behavior |
@@ -566,7 +566,7 @@ uvx cachelens analyze trace.json --format json | jq '.cacheability_score'
 **Layout:**
 ```
 ┌─────────────────────────────────────────────┐
-│  CacheLens                    [Load Example] │
+│  TokenLens                    [Load Example] │
 │                                              │
 │  ┌────────────────────────────────────────┐  │
 │  │                                        │  │
@@ -605,7 +605,7 @@ uvx cachelens analyze trace.json --format json | jq '.cacheability_score'
 **Layout:**
 ```
 ┌─────────────────────────────────────────────┐
-│  CacheLens    [← New Analysis]              │
+│  TokenLens    [← New Analysis]              │
 │                                              │
 │  ┌──────────────────────────────────────┐   │
 │  │  Cacheability Score: 62 / 100        │   │
@@ -668,7 +668,7 @@ uvx cachelens analyze trace.json --format json | jq '.cacheability_score'
 ## Screen 3: CLI Output (Human-Readable Mode)
 
 ```
-CacheLens Analysis
+TokenLens Analysis
 ══════════════════
 
 Score: 62 / 100 (Good)
@@ -718,7 +718,7 @@ Run with --suggestions to see full restructured prompts.
 ## Primary Command
 
 ```
-cachelens <command> [options]
+tokenlens <command> [options]
 ```
 
 ## Commands
@@ -732,7 +732,7 @@ cachelens <command> [options]
 ## `analyze` Subcommand
 
 ```
-cachelens analyze <file> [options]
+tokenlens analyze <file> [options]
 
 Arguments:
   file              Path to input file (or - for stdin)
@@ -748,7 +748,7 @@ Options:
 ## `ui` Subcommand
 
 ```
-cachelens ui [options]
+tokenlens ui [options]
 
 Options:
   --port <port>     Port to serve on (default: 8420)
@@ -759,23 +759,23 @@ Options:
 
 ```bash
 # Basic analysis
-uvx cachelens analyze my-trace.json
+uvx tokenlens analyze my-trace.json
 
 # JSON output for scripting
-uvx cachelens analyze my-trace.json --format json
+uvx tokenlens analyze my-trace.json --format json
 
 # Pipe from stdin
-cat prompt.txt | uvx cachelens analyze - --format json
+cat prompt.txt | uvx tokenlens analyze - --format json
 
 # Just the score
-uvx cachelens analyze my-trace.json --score-only
+uvx tokenlens analyze my-trace.json --score-only
 
 # Full details
-uvx cachelens analyze my-trace.json --suggestions
+uvx tokenlens analyze my-trace.json --suggestions
 
 # Launch UI
-uvx cachelens ui
-uvx cachelens ui --port 9000
+uvx tokenlens ui
+uvx tokenlens ui --port 9000
 ```
 
 ## Exit Codes
@@ -964,7 +964,7 @@ The UI is two screens with no complex state. A build step adds complexity for th
 ## Architecture
 
 ```
-cachelens/
+tokenlens/
 ├── __init__.py
 ├── __main__.py          # Entry point
 ├── cli.py               # Click CLI
@@ -1047,12 +1047,12 @@ Everything. The full CLI, UI, engine, and examples. MIT license.
 ## Repo structure
 
 ```
-cachelens/
+tokenlens/
 ├── README.md
 ├── LICENSE (MIT)
 ├── pyproject.toml
 ├── src/
-│   └── cachelens/
+│   └── tokenlens/
 │       └── (source code)
 ├── tests/
 ├── examples/
@@ -1081,7 +1081,7 @@ cachelens/
 
 # 14. Non-Goals and Anti-Patterns
 
-**Do not turn this into a generic observability platform.** CacheLens analyzes prompts for token efficiency. It does not monitor latency, track errors, display dashboards of API call volumes, or replace Langfuse/LangSmith/Helicone. If someone asks for real-time monitoring, the answer is "use an observability tool and export traces to CacheLens for optimization analysis."
+**Do not turn this into a generic observability platform.** TokenLens analyzes prompts for token efficiency. It does not monitor latency, track errors, display dashboards of API call volumes, or replace Langfuse/LangSmith/Helicone. If someone asks for real-time monitoring, the answer is "use an observability tool and export traces to TokenLens for optimization analysis."
 
 **Do not become an enterprise compliance platform.** No PII detection, no policy enforcement, no audit trails, no role-based access control. These are real needs but they are different products.
 
@@ -1091,7 +1091,7 @@ cachelens/
 
 **Do not use LLMs in the analysis pipeline.** The analysis engine must be deterministic, fast, free, and reproducible. "Use GPT-4 to suggest optimizations" defeats the purpose (costs tokens to save tokens). Rules-based analysis first. LLM-powered suggestions can be an optional add-on later.
 
-**Do not build a prompt editor.** CacheLens analyzes and suggests. It does not need to be a place where users write and iterate on prompts. Show the optimized structure; let users copy it to their own tools.
+**Do not build a prompt editor.** TokenLens analyzes and suggests. It does not need to be a place where users write and iterate on prompts. Show the optimized structure; let users copy it to their own tools.
 
 **Do not add user accounts, authentication, or cloud storage in V1.** The tool is local and stateless. That's a feature, not a limitation.
 
@@ -1102,11 +1102,11 @@ cachelens/
 ## V1 — Core Analysis Tool
 
 **What ships:**
-- CLI: `cachelens analyze` with human and JSON output
+- CLI: `tokenlens analyze` with human and JSON output
 - Web UI: paste/upload → analyze → results (two screens)
 - Engine: repeated block detection, static/dynamic classification, cacheability score, waste ranking, restructuring suggestions
 - One built-in example trace
-- `uvx cachelens` distribution
+- `uvx tokenlens` distribution
 
 **Why it matters:** This is the complete core product. A user can go from "I wonder if my prompts are wasteful" to "here's exactly what to fix and how" in under 30 seconds.
 
@@ -1120,7 +1120,7 @@ cachelens/
 - `--watch` mode: re-analyze when file changes
 - UI: syntax highlighting in the content viewer
 - 3-5 built-in example traces covering common patterns
-- `cachelens compare trace1.json trace2.json` — compare two analyses
+- `tokenlens compare trace1.json trace2.json` — compare two analyses
 
 **Why it matters:** Makes the tool more useful for real workflows without changing the architecture.
 
@@ -1133,7 +1133,7 @@ cachelens/
 **What gets added:**
 - Import adapters: LangSmith, Langfuse, Helicone, OpenAI log format
 - Local history: SQLite storage of past analyses with trend tracking
-- CI mode: `cachelens ci --threshold 60` (exits non-zero if score below threshold)
+- CI mode: `tokenlens ci --threshold 60` (exits non-zero if score below threshold)
 - GitHub Action wrapper
 - Optional hosted version (analyze via web without installing)
 - Team sharing (export/import analysis bundles)
@@ -1152,7 +1152,7 @@ cachelens/
 
 ### Build Summary
 
-CacheLens is a Python CLI + local web tool. It takes AI prompts/traces as input, runs a deterministic rules-based analysis engine, and outputs a cacheability score, waste breakdown, and concrete restructuring suggestions. No external dependencies beyond `tiktoken`. No backend infrastructure. Ships via `uvx`.
+TokenLens is a Python CLI + local web tool. It takes AI prompts/traces as input, runs a deterministic rules-based analysis engine, and outputs a cacheability score, waste breakdown, and concrete restructuring suggestions. No external dependencies beyond `tiktoken`. No backend infrastructure. Ships via `uvx`.
 
 ### Exact MVP to implement first
 
@@ -1175,7 +1175,7 @@ Build in this order. Each module is independently testable.
 ### Single most important command
 
 ```bash
-uvx cachelens analyze trace.json --format json
+uvx tokenlens analyze trace.json --format json
 ```
 
 This is the agent-mode entry point. If this works correctly and outputs valid JSON matching the schema in Section 10, the tool is useful for both humans and automated workflows.
@@ -1190,4 +1190,4 @@ This is the agent-mode entry point. If this works correctly and outputs valid JS
 
 ### Best way to keep scope under control
 
-Implement the engine modules one at a time, each with tests. Get `cachelens analyze` working with JSON output before touching the web UI. The CLI is the source of truth — the UI is just a wrapper that calls the same engine. If a feature doesn't improve the output of `cachelens analyze trace.json --format json`, it doesn't belong in V1.
+Implement the engine modules one at a time, each with tests. Get `tokenlens analyze` working with JSON output before touching the web UI. The CLI is the source of truth — the UI is just a wrapper that calls the same engine. If a feature doesn't improve the output of `tokenlens analyze trace.json --format json`, it doesn't belong in V1.

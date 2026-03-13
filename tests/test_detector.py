@@ -1,13 +1,13 @@
 """Tests for the source detector module.
 
-Covers URL tag parsing, User-Agent detection, X-CacheLens-Source header,
+Covers URL tag parsing, User-Agent detection, X-TokenLens-Source header,
 priority ordering, provider validation, and sanitize_tag utility.
 """
 from __future__ import annotations
 
 import pytest
 
-from cachelens.detector import ParsedProxy, detect_source_from_ua, parse_proxy_path, sanitize_tag
+from tokenlens.detector import ParsedProxy, detect_source_from_ua, parse_proxy_path, sanitize_tag
 
 
 # ---------------------------------------------------------------------------
@@ -244,10 +244,10 @@ def test_parse_user_agent_python_httpx() -> None:
     assert result.source == "python-httpx"
 
 
-def test_parse_x_cachelens_source_header() -> None:
+def test_parse_x_tokenlens_source_header() -> None:
     result = parse_proxy_path(
         "/proxy/anthropic/v1/messages",
-        headers={"X-CacheLens-Source": "my-custom-tool"},
+        headers={"X-TokenLens-Source": "my-custom-tool"},
     )
     assert result is not None
     assert result.source == "my-custom-tool"
@@ -269,31 +269,31 @@ def test_priority_url_tag_wins_over_user_agent() -> None:
     assert result.source == "my-tag"
 
 
-def test_priority_url_tag_wins_over_x_cachelens_source() -> None:
+def test_priority_url_tag_wins_over_x_tokenlens_source() -> None:
     result = parse_proxy_path(
         "/proxy/anthropic/my-tag/v1/messages",
-        headers={"X-CacheLens-Source": "other-source"},
+        headers={"X-TokenLens-Source": "other-source"},
     )
     assert result is not None
     assert result.source == "my-tag"
 
 
-def test_priority_user_agent_wins_over_x_cachelens_source() -> None:
+def test_priority_user_agent_wins_over_x_tokenlens_source() -> None:
     result = parse_proxy_path(
         "/proxy/anthropic/v1/messages",
         headers={
             "User-Agent": "claude-code/1.2.3",
-            "X-CacheLens-Source": "other-source",
+            "X-TokenLens-Source": "other-source",
         },
     )
     assert result is not None
     assert result.source == "claude-code"
 
 
-def test_priority_x_cachelens_source_wins_over_unknown() -> None:
+def test_priority_x_tokenlens_source_wins_over_unknown() -> None:
     result = parse_proxy_path(
         "/proxy/anthropic/v1/messages",
-        headers={"X-CacheLens-Source": "my-custom-tool"},
+        headers={"X-TokenLens-Source": "my-custom-tool"},
     )
     assert result is not None
     assert result.source == "my-custom-tool"

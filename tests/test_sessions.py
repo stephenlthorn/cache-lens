@@ -1,7 +1,7 @@
 """Tests for per-session cost tracking (Phase 5)."""
 import time
 
-from cachelens.sessions import detect_sessions
+from tokenlens.sessions import detect_sessions
 
 
 def _call(ts, source="claude-code", model="claude-sonnet-4-6", cost=0.01):

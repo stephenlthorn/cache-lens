@@ -1,4 +1,4 @@
-"""Junk token detector for CacheLens v2.
+"""Junk token detector for TokenLens v2.
 
 Detects four waste types in AI API request bodies:
 - whitespace: excessive newlines/spaces

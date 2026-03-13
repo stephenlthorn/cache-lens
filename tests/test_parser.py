@@ -1,4 +1,4 @@
-from cachelens.parser import parse_input
+from tokenlens.parser import parse_input
 
 
 def test_raw_text():
