@@ -8,6 +8,51 @@
 
 CacheLens v2 follows an **observe + suggest** model. All features passively detect waste and surface insights. Active proxy-layer modifications (stripping whitespace, compressing prompts) are available as opt-in toggles per feature. Nothing changes the request by default.
 
+## Implementation Prerequisites
+
+### Proxy Pipeline Changes
+
+The current `handle_proxy_request` in `proxy.py` receives `body` as raw `bytes` and passes it directly to `httpx` without parsing (except for a discarded `is_streaming_request` check). **All v2 features require a shared parsed request body.**
+
+**Required change:** Parse request body bytes into a dict once (guarded by `method == "POST"` and chat/completion endpoint check). Pass the parsed dict to all analysis functions. Reuse for `is_streaming_request`, `max_tokens` extraction, and active-mode modifications.
+
+```python
+parsed_body = None
+if method == "POST" and body:
+    try:
+        parsed_body = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        pass
+```
+
+Waste detection, heatmap, and history analysis run for **both streaming and non-streaming requests** — the request body is available in both paths.
+
+### Call ID Propagation
+
+The current `_record_call` in `proxy.py` discards the return value from `store.insert_call()`. **v2 requires the call ID** to link waste records in the `call_waste` table.
+
+**Required change:** `_record_call` must capture and return the `call_id` from `store.insert_call()`. The event dict must include the `id` field. This applies to both the non-streaming path and the streaming `_UpstreamStreamResponse` path.
+
+### Request Hash Ordering
+
+When active optimizations are enabled, request body may be modified before forwarding. **Request hash is computed on the original body BEFORE any modifications.** This preserves dedup correctness. Active mode modifications happen after hashing but before forwarding.
+
+### Schema Migration
+
+All new columns go in both `_SCHEMA` (for new installs) AND `_migrate()` (for existing installs). New tables use `CREATE TABLE IF NOT EXISTS`.
+
+### Token Counting Accuracy
+
+Token counts for waste estimation use `tiktoken` with `cl100k_base` as a cross-provider approximation. Actual token counts may differ by 5-15% for non-OpenAI providers. For savings calculations, we use the provider-reported token counts from the response (which are exact); tiktoken is only used for pre-flight waste estimation where provider counts are not yet available.
+
+### `insert_call` Signature
+
+`UsageStore.insert_call()` expands to accept optional keyword arguments for all new columns: `max_tokens_requested`, `output_utilization`, `message_count`, `history_tokens`, `history_ratio`, `token_heatmap`.
+
+### Recommendation Type Extension
+
+The `Recommendation.type` Literal union in `recommender.py` must be extended to include `'output_bloat' | 'history_bloat' | 'right_sizing'`.
+
 ---
 
 ## Feature 1: Junk Token Detector
@@ -29,17 +74,18 @@ Scan every proxied request for token waste patterns and quantify savings.
 New `call_waste` table:
 
 ```sql
-CREATE TABLE call_waste (
+CREATE TABLE IF NOT EXISTS call_waste (
     id INTEGER PRIMARY KEY,
     call_id INTEGER REFERENCES calls(id),
     waste_type TEXT,          -- 'whitespace' | 'polite_filler' | 'redundant_instruction' | 'empty_message'
     waste_tokens INTEGER,
     savings_usd REAL,
-    detail TEXT,              -- JSON: matched pattern, location, snippet
-    FOREIGN KEY (call_id) REFERENCES calls(id)
+    detail TEXT               -- JSON: matched pattern, location, snippet
 );
-CREATE INDEX idx_call_waste_call_id ON call_waste(call_id);
+CREATE INDEX IF NOT EXISTS idx_call_waste_call_id ON call_waste(call_id);
 ```
+
+Known limitation: polite filler is only detected in system-role messages. Filler in user/assistant messages (e.g., few-shot examples) is intentionally not flagged to minimize false positives.
 
 ### API
 
@@ -117,8 +163,9 @@ New "Output Efficiency" card:
 
 ### Implementation
 
-- Extract `max_tokens` in `proxy.py` during request parsing (provider-specific field names: `max_tokens` for Anthropic/OpenAI, `maxOutputTokens` for Google)
-- Compute utilization after response received
+- Extract `max_tokens` from the parsed request body dict (provider-specific field names: `max_tokens` for Anthropic/OpenAI, `maxOutputTokens` for Google). Store as a local variable.
+- For non-streaming: compute utilization after response is received and `output_tokens` is extracted.
+- For streaming: `max_tokens_requested` is captured during request parsing. After stream completes and `output_tokens` is extracted from SSE chunks in `_UpstreamStreamResponse`, utilization is computed and both values are passed to `_record_call`.
 - Store on call record
 - New recommendation check in `recommender.py`: `output_bloat`
 
@@ -131,7 +178,7 @@ For multi-turn conversations, measure how much of the input is stale history vs 
 
 ### Detection Logic
 
-Multi-turn detection: request has >4 messages in the messages array.
+Multi-turn detection: request has >6 messages in the messages array (configurable). A typical system+user is 2 messages; >6 ensures at least 2 full conversation turns before flagging.
 
 For detected multi-turn requests:
 - **History tokens**: sum of all message tokens except system prompt and last user message
@@ -139,7 +186,7 @@ For detected multi-turn requests:
 - **History ratio**: `history_tokens / total_input_tokens`
 - Flag when history ratio > 70% (most of the input is old conversation)
 
-Also cross-reference with the existing repeated block detection to identify system prompts sent identically every turn.
+Also detect system prompts repeated identically across messages within the same request (inline detection in `waste_detector.py`, not the offline `engine/repeats.py` analyzer).
 
 ### Data Model
 
@@ -172,37 +219,16 @@ New widget in the Insights tab:
 
 ---
 
-## Feature 4: Prompt Compression Preview
+## Feature 4: Compression Preview (folded into Feature 1)
 
-### Purpose
-Show what *could* be saved if lightweight compression were applied, without actually modifying anything.
+Feature 4 was originally a separate "Prompt Compression Preview" but adds no new detection logic — it's a composite view of Features 1-3. Instead, it is folded into the Feature 1 Token Waste dashboard card:
 
-### Compression Estimate
+- The waste summary card includes a "Total Saveable" row summing all waste types + history bloat
+- `GET /api/usage/waste-summary` includes `total_compressible_tokens` and `compression_ratio` fields
+- Per-call `compressible_tokens` is included in `GET /api/usage/recent` response
+- Live feed shows a "compressible" badge per call
 
-For each logged request, compute a "compressible tokens" estimate by summing:
-1. Whitespace waste (from junk token detector)
-2. Redundant instruction waste (from junk token detector)
-3. Polite filler waste (from junk token detector)
-4. History bloat above 50% threshold (from conversation tracker)
-
-This is a composite score derived from features 1-3 — no new detection logic needed.
-
-### API
-
-- Compression estimate included in `GET /api/usage/waste-summary` as `total_compressible_tokens` and `compression_ratio`
-- Per-call compression badge in `GET /api/usage/recent` response (new `compressible_tokens` field)
-
-### Dashboard
-
-- "Compressible" badge on each call in the live feed (shows estimated saveable tokens)
-- Summary card: "X% of your input tokens are compressible. Potential savings: $Y.XX/month"
-
-### Implementation
-
-No new module — this is a view layer that aggregates waste data from features 1-3.
-- `waste_detector.py` already produces per-call waste items
-- A utility function `compression_estimate(waste_items, history_tokens, history_ratio)` computes the composite
-- Dashboard renders the badge from the existing waste data
+No separate module, API endpoint, or dashboard card needed.
 
 ---
 
@@ -310,7 +336,7 @@ When an anomaly is detected, auto-generate a report:
 New module: `src/cachelens/anomaly.py`
 
 - `detect_anomalies(store: UsageStore, days: int) -> list[Anomaly]`
-- Queries `daily_agg` for rolling stats
+- Queries `daily_agg` for rolling stats, supplemented with today's live data from `calls` table (same pattern used by other endpoints like `api_daily`)
 - Generates drill-down by querying top calls for flagged dates
 - Called from a new endpoint and optionally from the aggregator on each rollup
 
@@ -343,6 +369,8 @@ Score 0-2 = "simple", 3-4 = "moderate", 5+ = "complex"
 | claude-sonnet-4-6 | claude-haiku-4-5 | (keep) |
 | gpt-4o | gpt-4o-mini | (keep) |
 | gpt-4.1 | gpt-4.1-mini | (keep) |
+
+Note: This downgrade map is separate from and more granular than the existing `_DOWNSELL_MAP` in `recommender.py` (which maps opus->sonnet and gpt-4o->gpt-4o-mini without complexity awareness). The existing downsell recommendation continues to work independently. Right-sizing adds complexity-based analysis on top.
 | gemini-2.5-pro | gemini-2.0-flash | (keep) |
 
 ### API
@@ -405,7 +433,7 @@ New module: `src/cachelens/top.py`
 - Uses `rich` library for terminal rendering (Live display + Table)
 - Header row: computed from rolling window of last 60 seconds
 - Scrolling table: last 50 calls
-- Keyboard handling via `rich` or `click.getchar()`
+- Keyboard input runs in a separate `threading.Thread` to avoid blocking the WebSocket event loop. Key events communicated to main rendering loop via `queue.Queue`
 - Color coding: green for high cache hit, red for high cost, yellow for waste detected
 
 ### Dependencies
@@ -457,7 +485,7 @@ cachelens report --format json  # Machine-readable
 
 ### Webhook
 
-New event type `weekly_digest` — fires automatically every Sunday via aggregator scheduler. Contains the full report as JSON.
+New event type `weekly_digest` — fires automatically every Sunday at 08:00 local time via a new weekly loop in `aggregator.py`. The aggregator loop dispatches the webhook by importing `dispatch_webhook` from `webhooks.py` (same function used by the proxy). Contains the full report as JSON.
 
 ### API
 
