@@ -151,6 +151,37 @@ def generate_recommendations(store: UsageStore) -> list[Recommendation]:
     except Exception:
         pass  # conversation_efficiency may not exist on old DBs; skip gracefully
 
+    # Check: right-sizing — sources using expensive models for simple tasks
+    try:
+        from cachelens.right_sizing import analyze_right_sizing
+        from cachelens.pricing import PricingTable as _PT
+        rs_rows = analyze_right_sizing(store=store, pricing=_PT(), days=30)
+        for row in rs_rows:
+            if row["simple_pct"] >= 0.5 and row["estimated_savings_usd"] > 0.10:
+                rec_id = hashlib.md5(
+                    f"right_sizing:{row['source']}:{row['model']}".encode()
+                ).hexdigest()[:12]
+                recommendations.append(Recommendation(
+                    id=rec_id,
+                    type="right_sizing",
+                    title=f"Downgrade {row['model']} for simple calls from {row['source']}",
+                    description=(
+                        f"{row['simple_pct']*100:.0f}% of calls from '{row['source']}' "
+                        f"on {row['model']} are simple. Suggested alternative: "
+                        f"{row['suggested_model_simple']}. "
+                        f"Est. savings: ${row['estimated_savings_usd']:.2f}."
+                    ),
+                    estimated_impact="high" if row["estimated_savings_usd"] > 1.0 else "medium",
+                    deep_dive_link="/api/usage/right-sizing",
+                    metrics={
+                        "simple_pct": row["simple_pct"],
+                        "suggested_model": row["suggested_model_simple"],
+                        "estimated_savings_usd": row["estimated_savings_usd"],
+                    },
+                ))
+    except Exception:
+        pass
+
     return _rank(recommendations)
 
 

@@ -741,6 +741,13 @@ def create_app(
         s: UsageStore = request.app.state.store
         return JSONResponse(content=detect_anomalies(store=s, days=days))
 
+    @app.get("/api/usage/right-sizing")
+    def api_right_sizing(request: Request, days: int = 30) -> JSONResponse:
+        from cachelens.right_sizing import analyze_right_sizing
+        s: UsageStore = request.app.state.store
+        p: PricingTable = request.app.state.pricing
+        return JSONResponse(content=analyze_right_sizing(store=s, pricing=p, days=days))
+
     # --- Webhook Notifications ---
 
     @app.get("/api/settings/webhooks")

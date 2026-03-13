@@ -936,6 +936,18 @@ class UsageStore:
 
         return sorted(result, key=lambda x: -x["total"])
 
+    def recent_calls_with_features(self, days: int = 30) -> list[dict]:
+        """Return recent calls with all analysis columns for right-sizing."""
+        cutoff = int(time.time()) - days * 86400
+        with self._lock:
+            rows = self._con.execute(
+                """SELECT source, model, provider, input_tokens, output_tokens,
+                          cost_usd, message_count, token_heatmap
+                   FROM calls WHERE ts >= ?""",
+                (cutoff,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def close(self) -> None:
         self._con.close()
 
