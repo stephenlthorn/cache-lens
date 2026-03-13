@@ -555,3 +555,96 @@ def test_get_settings_by_prefix(store):
     assert "budget.sources.app-a.monthly_limit_usd" in keys
     assert "budget.sources.app-b.daily_limit_usd" in keys
     assert "unrelated.key" not in keys
+
+
+# ---------------------------------------------------------------------------
+# Schema migration: call_waste table + 6 new calls columns
+# ---------------------------------------------------------------------------
+
+
+def test_calls_table_has_new_columns(tmp_path):
+    store = UsageStore(tmp_path / "test.db")
+    conn = store._con
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(calls)").fetchall()}
+    assert "max_tokens_requested" in cols
+    assert "output_utilization" in cols
+    assert "message_count" in cols
+    assert "history_tokens" in cols
+    assert "history_ratio" in cols
+    assert "token_heatmap" in cols
+
+
+def test_call_waste_table_exists(tmp_path):
+    store = UsageStore(tmp_path / "test.db")
+    conn = store._con
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+    assert "call_waste" in tables
+
+
+def test_insert_call_returns_id(tmp_path):
+    store = UsageStore(tmp_path / "test.db")
+    row_id = store.insert_call(
+        ts=1000, provider="anthropic", model="claude-sonnet-4-6",
+        source="test", source_tag=None,
+        input_tokens=100, output_tokens=50,
+        cache_read_tokens=0, cache_write_tokens=0,
+        cost_usd=0.001, endpoint="/v1/messages",
+        request_hash="abc123",
+    )
+    assert isinstance(row_id, int)
+    assert row_id > 0
+
+
+def test_insert_call_with_new_kwargs(tmp_path):
+    store = UsageStore(tmp_path / "test.db")
+    row_id = store.insert_call(
+        ts=1000, provider="anthropic", model="claude-sonnet-4-6",
+        source="test", source_tag=None,
+        input_tokens=1000, output_tokens=200,
+        cache_read_tokens=0, cache_write_tokens=0,
+        cost_usd=0.01, endpoint="/v1/messages",
+        request_hash="def456",
+        max_tokens_requested=800,
+        output_utilization=0.25,
+        message_count=8,
+        history_tokens=600,
+        history_ratio=0.6,
+        token_heatmap='{"system_prompt": 200, "user_query": 100}',
+    )
+    row = store._con.execute("SELECT * FROM calls WHERE id=?", (row_id,)).fetchone()
+    assert dict(row)["max_tokens_requested"] == 800
+    assert abs(dict(row)["output_utilization"] - 0.25) < 0.001
+    assert dict(row)["message_count"] == 8
+
+
+def test_migrate_existing_db_adds_columns(tmp_path):
+    """Simulate an old DB (without new columns) being migrated."""
+    import sqlite3
+    db_path = tmp_path / "old.db"
+    con = sqlite3.connect(str(db_path))
+    con.executescript("""
+        CREATE TABLE calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts INTEGER NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            source TEXT NOT NULL,
+            source_tag TEXT,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+            cost_usd REAL NOT NULL DEFAULT 0.0,
+            endpoint TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            user_agent TEXT NOT NULL DEFAULT ''
+        );
+    """)
+    con.commit()
+    con.close()
+    store = UsageStore(db_path)
+    cols = {row[1] for row in store._con.execute("PRAGMA table_info(calls)").fetchall()}
+    assert "max_tokens_requested" in cols
+    assert "token_heatmap" in cols

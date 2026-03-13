@@ -23,7 +23,15 @@ CREATE TABLE IF NOT EXISTS calls (
     cost_usd REAL NOT NULL DEFAULT 0.0,
     endpoint TEXT NOT NULL,
     request_hash TEXT NOT NULL,
-    user_agent TEXT NOT NULL DEFAULT ''
+    user_agent TEXT NOT NULL DEFAULT '',
+    latency_ms REAL,
+    status_code INTEGER,
+    max_tokens_requested INTEGER,
+    output_utilization REAL,
+    message_count INTEGER,
+    history_tokens INTEGER,
+    history_ratio REAL,
+    token_heatmap TEXT
 );
 CREATE TABLE IF NOT EXISTS daily_agg (
     date TEXT NOT NULL,
@@ -79,6 +87,15 @@ CREATE TABLE IF NOT EXISTS request_log (
     request_body TEXT,
     response_body TEXT
 );
+CREATE TABLE IF NOT EXISTS call_waste (
+    id INTEGER PRIMARY KEY,
+    call_id INTEGER REFERENCES calls(id),
+    waste_type TEXT,
+    waste_tokens INTEGER,
+    savings_usd REAL,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_call_waste_call_id ON call_waste(call_id);
 CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts);
 CREATE INDEX IF NOT EXISTS idx_daily_agg_date ON daily_agg(date);
 CREATE INDEX IF NOT EXISTS idx_request_log_ts ON request_log(ts);
@@ -110,6 +127,18 @@ class UsageStore:
             self._con.execute("ALTER TABLE calls ADD COLUMN latency_ms REAL")
         if "status_code" not in cols:
             self._con.execute("ALTER TABLE calls ADD COLUMN status_code INTEGER")
+        if "max_tokens_requested" not in cols:
+            self._con.execute("ALTER TABLE calls ADD COLUMN max_tokens_requested INTEGER")
+        if "output_utilization" not in cols:
+            self._con.execute("ALTER TABLE calls ADD COLUMN output_utilization REAL")
+        if "message_count" not in cols:
+            self._con.execute("ALTER TABLE calls ADD COLUMN message_count INTEGER")
+        if "history_tokens" not in cols:
+            self._con.execute("ALTER TABLE calls ADD COLUMN history_tokens INTEGER")
+        if "history_ratio" not in cols:
+            self._con.execute("ALTER TABLE calls ADD COLUMN history_ratio REAL")
+        if "token_heatmap" not in cols:
+            self._con.execute("ALTER TABLE calls ADD COLUMN token_heatmap TEXT")
 
     def insert_call(self, *, ts: int, provider: str, model: str,
                     source: str, source_tag: str | None,
@@ -118,16 +147,26 @@ class UsageStore:
                     cost_usd: float, endpoint: str, request_hash: str,
                     user_agent: str = "",
                     latency_ms: float | None = None,
-                    status_code: int | None = None) -> int:
+                    status_code: int | None = None,
+                    max_tokens_requested: int | None = None,
+                    output_utilization: float | None = None,
+                    message_count: int | None = None,
+                    history_tokens: int | None = None,
+                    history_ratio: float | None = None,
+                    token_heatmap: str | None = None) -> int:
         with self._lock:
             cur = self._con.execute(
                 "INSERT INTO calls (ts,provider,model,source,source_tag,"
                 "input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,"
-                "cost_usd,endpoint,request_hash,user_agent,latency_ms,status_code)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "cost_usd,endpoint,request_hash,user_agent,latency_ms,status_code,"
+                "max_tokens_requested,output_utilization,message_count,"
+                "history_tokens,history_ratio,token_heatmap)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (ts, provider, model, source, source_tag,
                  input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-                 cost_usd, endpoint, request_hash, user_agent, latency_ms, status_code),
+                 cost_usd, endpoint, request_hash, user_agent, latency_ms, status_code,
+                 max_tokens_requested, output_utilization, message_count,
+                 history_tokens, history_ratio, token_heatmap),
             )
             row_id = cur.lastrowid
             self._con.commit()
