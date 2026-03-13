@@ -735,6 +735,12 @@ def create_app(
         s: UsageStore = request.app.state.store
         return JSONResponse(content=s.token_heatmap_summary(days=days))
 
+    @app.get("/api/usage/anomalies")
+    def api_anomalies(request: Request, days: int = 30) -> JSONResponse:
+        from cachelens.anomaly import detect_anomalies
+        s: UsageStore = request.app.state.store
+        return JSONResponse(content=detect_anomalies(store=s, days=days))
+
     # --- Webhook Notifications ---
 
     @app.get("/api/settings/webhooks")
