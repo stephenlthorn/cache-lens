@@ -65,3 +65,24 @@ def test_empty_messages_returns_zero_heatmap():
     result = compute_heatmap(messages=[], tools=None, provider="anthropic")
     assert result["total"] == 0
     assert result["user_query"] == 0
+
+
+def test_handles_list_content_format():
+    """_message_text correctly handles list-of-blocks content (Anthropic tool-use format)."""
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "Hello from list content"}]},
+    ]
+    result = compute_heatmap(messages=messages, tools=None, provider="anthropic")
+    assert result["user_query"] > 0
+    assert result["total"] > 0
+
+
+def test_context_detection_with_unclosed_tag():
+    """Fallback heuristic handles <context> tags without closing tag."""
+    messages = [
+        {"role": "user", "content": "<context>some injected context without closing tag\nNow answer my question please."},
+    ]
+    result = compute_heatmap(messages=messages, tools=None, provider="anthropic")
+    # Either context or user_query should have tokens (not crash)
+    assert result["total"] > 0
+    assert result["context"] + result["user_query"] > 0
