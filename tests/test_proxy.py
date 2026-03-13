@@ -688,3 +688,72 @@ def test_proxy_records_waste_items(tmp_path):
     # Check waste items were stored
     waste_rows = store._con.execute("SELECT * FROM call_waste").fetchall()
     assert len(waste_rows) > 0
+
+
+def test_proxy_history_metrics_list_content(tmp_path):
+    """Test that history_tokens and history_ratio are computed correctly for list-format message content.
+
+    This ensures that messages with list-format content (Anthropic tool results format)
+    are properly tokenized when computing history metrics.
+    """
+    import asyncio
+    from cachelens.store import UsageStore
+    from cachelens.pricing import PricingTable
+    from cachelens.proxy import handle_proxy_request
+
+    store = UsageStore(tmp_path / "test.db")
+    pricing = PricingTable()
+
+    # Request with 7 messages (> 6 threshold) all with list-format content
+    request_body = {
+        "model": "claude-sonnet-4-6",
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "What is 2+2?"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "4"}]},
+            {"role": "user", "content": [{"type": "text", "text": "Thanks"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "Welcome"}]},
+            {"role": "user", "content": [{"type": "text", "text": "More?"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "Sure"}]},
+            {"role": "user", "content": [{"type": "text", "text": "Final question"}]},
+        ],
+        "max_tokens": 100,
+    }
+    body = json.dumps(request_body).encode()
+
+    fake_response_body = json.dumps({
+        "usage": {"input_tokens": 50, "output_tokens": 10, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+        "model": "claude-sonnet-4-6",
+    }).encode()
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        mock_response.status_code = 200
+        mock_response.content = fake_response_body
+        mock_response.headers = {"content-type": "application/json"}
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        asyncio.run(handle_proxy_request(
+            path="/proxy/anthropic/v1/messages",
+            method="POST",
+            headers={"content-type": "application/json", "x-api-key": "test"},
+            body=body,
+            store=store,
+            pricing=pricing,
+        ))
+
+    # Verify the call was recorded with history metrics
+    calls = store._con.execute("SELECT history_tokens, history_ratio FROM calls").fetchall()
+    assert len(calls) == 1
+
+    history_tokens, history_ratio = calls[0]
+    # history_tokens should be > 0 (list content was tokenized, not silently returning 0)
+    assert history_tokens is not None and history_tokens > 0, \
+        "history_tokens should be computed from list-format message content"
+    # history_ratio should be between 0 and 1
+    assert 0 <= history_ratio <= 1, \
+        f"history_ratio should be between 0 and 1, got {history_ratio}"
