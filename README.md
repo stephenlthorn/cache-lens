@@ -2,7 +2,7 @@
 
 **AI cost intelligence — local-first.**
 
-TokenLens is a transparent proxy + dashboard that tracks every AI API call, shows you exactly where your money goes, and finds ways to spend less.
+TokenLens is a transparent proxy + dashboard that tracks every AI API call, shows you exactly where your money goes, detects waste, and finds ways to spend less.
 
 - **Zero config** — install, point your SDK, done
 - **100% local** — your data never leaves your machine
@@ -41,6 +41,14 @@ export OPENAI_BASE_URL="http://localhost:8420/proxy/openai"
 
 ---
 
+## Architecture
+
+![TokenLens Architecture](docs/architecture.png)
+
+Every SDK call flows through the TokenLens proxy. The proxy runs budget checks, detects token waste, computes heatmaps, and records everything to a local SQLite database — then forwards the request to the real AI provider untouched. The dashboard and `tokenlens top` CLI read from that database in real time.
+
+---
+
 ## Features
 
 ### Cost Intelligence
@@ -55,12 +63,25 @@ export OPENAI_BASE_URL="http://localhost:8420/proxy/openai"
 | **Budget Caps** | Daily and monthly spend limits with automatic request blocking |
 | **Per-source Budgets** | Set spend limits per tool/agent/source independently |
 | **Custom Pricing** | Override default per-token rates for any model |
+| **Cost Anomaly Detection** | Rolling mean + 2σ detection of spend, call count, and token spikes |
+| **Weekly Digest** | Automated Sunday report: spend, top sources, waste, budget projection |
+
+### Token Intelligence
+
+| Feature | Description |
+|---------|-------------|
+| **Token Waste Detection** | Identifies junk tokens: whitespace bloat, polite filler, redundant instructions, empty messages |
+| **Output Utilization** | Tracks how much of your `max_tokens` budget is actually used per call |
+| **Token Heatmap** | Breaks down every request into sections: system prompt, tools, context, history, query |
+| **History Bloat Tracking** | Detects sources where conversation history consumes >60% of input tokens |
+| **Model Right-Sizing** | Scores call complexity (0–9) and recommends cheaper models for simple tasks |
 
 ### Observability
 
 | Feature | Description |
 |---------|-------------|
 | **Live Feed** | Real-time WebSocket stream of every API call with cost |
+| **`tokenlens top`** | htop-style live terminal view: calls/min, cost/hr, cache %, waste |
 | **Cache Hit Tracking** | Daily cache hit rate trend with improvement/degradation detection |
 | **Provider Health** | P50/P95/P99 latency and error rates per provider |
 | **Rate Limit Tracking** | Hourly 429 error counts and timeline per provider |
@@ -72,7 +93,7 @@ export OPENAI_BASE_URL="http://localhost:8420/proxy/openai"
 
 | Feature | Description |
 |---------|-------------|
-| **8-Check Engine** | Automated analysis: cache utilization, model costs, prompt sizes, waste detection, call frequency, and more |
+| **12-Check Engine** | Automated analysis: cache utilization, model costs, prompt sizes, waste, history bloat, model right-sizing, and more |
 | **Actionable Insights** | Each recommendation includes estimated savings impact |
 
 ### Integrations
@@ -80,8 +101,9 @@ export OPENAI_BASE_URL="http://localhost:8420/proxy/openai"
 | Feature | Description |
 |---------|-------------|
 | **CSV Export** | Download usage data for spreadsheets or BI tools |
-| **Webhook Notifications** | HTTP callbacks on `call_recorded` and `cost_alert` events |
+| **Webhook Notifications** | HTTP callbacks on `call_recorded`, `cost_alert`, and `weekly_digest` events |
 | **Prometheus /metrics** | Standard exposition format for monitoring stacks |
+| **`tokenlens report`** | CLI command to print or export the weekly cost digest |
 
 ### Proxy Features
 
@@ -95,15 +117,33 @@ export OPENAI_BASE_URL="http://localhost:8420/proxy/openai"
 ## CLI Reference
 
 ```
-tokenlens install             # Install as background service
-tokenlens uninstall [--purge] # Remove service (--purge deletes data)
+tokenlens install             # Install as background service (auto-starts on boot)
+tokenlens uninstall [--purge] # Remove service (--purge deletes all data)
 tokenlens ui [--port 8420]    # Open dashboard in browser
-tokenlens daemon              # Run in foreground (for debugging)
+tokenlens daemon              # Run server in foreground (for debugging)
 tokenlens status              # Show daemon status
+tokenlens top [--port 8420]   # Live htop-style terminal view of API traffic
+tokenlens report [--days 7]   # Print weekly cost digest
 tokenlens analyze <file|->    # Analyze a prompt trace for waste
 ```
 
-### Analyze options
+### `tokenlens top` keys
+
+```
+q / Q    Quit
+p / P    Pause / resume live feed
+```
+
+### `tokenlens report` options
+
+```
+--days N          Days to include (default: 7)
+--format human    Human-readable text (default)
+--format json     JSON output for scripting
+--port N          Daemon port (default: 8420)
+```
+
+### `tokenlens analyze` options
 
 ```
 --format human|json     Output format (default: human)
@@ -135,7 +175,13 @@ All endpoints are served at `http://localhost:8420` (default port).
 | `GET` | `/api/usage/budget-status` | Current spend vs limits |
 | `GET` | `/api/usage/provider-health?days=1` | Latency and error rates |
 | `GET` | `/api/usage/rate-limits?days=1` | Rate limit (429) events |
-| `GET` | `/api/usage/recommendations` | AI-generated cost recommendations |
+| `GET` | `/api/usage/recommendations` | Cost recommendations |
+| `GET` | `/api/usage/waste-summary?days=30` | Token waste breakdown by type |
+| `GET` | `/api/usage/conversation-efficiency?days=30` | History bloat per source |
+| `GET` | `/api/usage/token-heatmap?days=30` | Token section breakdown per call |
+| `GET` | `/api/usage/anomalies?days=30` | Spend/call/token anomalies |
+| `GET` | `/api/usage/right-sizing?days=30` | Model right-sizing recommendations |
+| `GET` | `/api/usage/digest?days=7` | Weekly cost digest |
 
 ### Settings
 
@@ -182,7 +228,7 @@ TokenLens stores its data in `~/.tokenlens/`:
 | `alerts.daily_cost_threshold` | — | Alert when daily spend exceeds this |
 | `alerts.enabled` | `false` | Enable cost alerts |
 | `webhook.url` | — | Webhook endpoint URL |
-| `webhook.events` | — | Comma-separated event types |
+| `webhook.events` | — | Comma-separated: `call_recorded`, `cost_alert`, `weekly_digest` |
 | `webhook.enabled` | `false` | Enable webhooks |
 | `logging.enabled` | `false` | Capture request/response bodies |
 | `dedup.enabled` | `false` | Enable request deduplication |
@@ -195,23 +241,25 @@ TokenLens stores its data in `~/.tokenlens/`:
 ```
 Your App → SDK → TokenLens Proxy (localhost:8420) → AI Provider
                       ↓
-              Records every call
-              Calculates cost
-              Checks budget caps
-              Broadcasts via WebSocket
+              1. Budget check (block if over limit)
+              2. Waste detection (whitespace, filler, redundant text)
+              3. Token heatmap (section breakdown: system/tools/context/history/query)
+              4. History bloat tracking (conversation efficiency)
+              5. Record call + cost to SQLite
+              6. Broadcast via WebSocket
                       ↓
-              Dashboard + API + Alerts
+              Dashboard + tokenlens top CLI + Alerts + Webhooks
 ```
 
-TokenLens acts as a transparent HTTP proxy. It intercepts API calls, records token usage and cost, then forwards them to the real provider. Responses stream back untouched. The dashboard reads from a local SQLite database — nothing leaves your machine.
+TokenLens acts as a transparent HTTP proxy. It intercepts API calls, computes token intelligence metrics, records cost, then forwards requests to the real provider. Responses stream back untouched. The dashboard and CLI read from a local SQLite database — nothing leaves your machine.
 
 ---
 
 ## Development
 
 ```bash
-git clone https://github.com/stephenlthorn/cache-lens.git
-cd cache-lens
+git clone https://github.com/stephenlthorn/token-lens.git
+cd token-lens
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 python3 -m pytest tests/ -v
