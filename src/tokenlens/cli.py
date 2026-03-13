@@ -172,3 +172,11 @@ def uninstall_cmd(purge: bool) -> None:
     from .installer import uninstall as _uninstall
 
     _uninstall(purge=purge)
+
+
+@main.command()
+@click.option("--port", default=8420, show_default=True, help="Daemon port")
+def top(port: int) -> None:
+    """Live terminal view of API traffic (htop-style)."""
+    from tokenlens.top import run_top
+    run_top(port=port)
