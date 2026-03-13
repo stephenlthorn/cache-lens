@@ -840,7 +840,7 @@ class UsageStore:
         cutoff = int(time.time()) - days * 86400
         with self._lock:
             rows = self._con.execute(
-                "SELECT waste_type, SUM(waste_tokens) as tokens, SUM(savings_usd) as savings"
+                "SELECT waste_type, SUM(waste_tokens) as tokens, SUM(COALESCE(savings_usd, 0)) as savings"
                 " FROM call_waste"
                 " JOIN calls ON call_waste.call_id = calls.id"
                 " WHERE calls.ts >= ?"

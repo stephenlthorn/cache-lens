@@ -688,3 +688,41 @@ def test_waste_summary_aggregates(tmp_path):
     summary = store.waste_summary(days=1)
     assert summary["total_waste_tokens"] == 60
     assert summary["by_type"]["whitespace"] == 60
+
+
+def test_waste_summary_excludes_old_records(tmp_path):
+    """Records older than the cutoff are excluded from waste_summary."""
+    import time as _time
+    store = UsageStore(tmp_path / "test.db")
+    now = int(_time.time())
+    # Old call (2 days ago) — should be excluded with days=1
+    old_cid = store.insert_call(
+        ts=now - 2 * 86400, provider="anthropic", model="claude-sonnet-4-6",
+        source="test", source_tag=None,
+        input_tokens=100, output_tokens=50,
+        cache_read_tokens=0, cache_write_tokens=0,
+        cost_usd=0.001, endpoint="/v1/messages",
+        request_hash="old",
+    )
+    store.insert_waste_items(call_id=old_cid, items=[
+        {"waste_type": "whitespace", "waste_tokens": 999, "savings_usd": 0.1, "detail": "{}"},
+    ])
+    summary = store.waste_summary(days=1)
+    assert summary["total_waste_tokens"] == 0
+    assert summary["by_type"] == {}
+
+
+def test_insert_waste_items_empty_list(tmp_path):
+    """insert_waste_items with an empty list is a no-op."""
+    store = UsageStore(tmp_path / "test.db")
+    call_id = store.insert_call(
+        ts=1000, provider="anthropic", model="claude-sonnet-4-6",
+        source="test", source_tag=None,
+        input_tokens=100, output_tokens=50,
+        cache_read_tokens=0, cache_write_tokens=0,
+        cost_usd=0.001, endpoint="/v1/messages",
+        request_hash="abc2",
+    )
+    store.insert_waste_items(call_id=call_id, items=[])  # should not raise
+    rows = store.get_waste_for_call(call_id)
+    assert rows == []
