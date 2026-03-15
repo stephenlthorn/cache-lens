@@ -1354,6 +1354,7 @@ if (settingsToggle && settingsPanel) {
       await loadAlertSettings();
       await loadBudgetSettings();
       await loadPricingSettings();
+      await loadQuotas();
     }
   });
 }
@@ -1674,6 +1675,143 @@ async function loadWasteSummary() {
   }
 }
 loadWasteSummary();
+
+// --- Quota Management ---
+let _quotaConfig = { source_limits: {}, model_limits: {}, kill_switches: [] };
+
+async function loadQuotas() {
+    try {
+        const resp = await fetch(`${BASE}/api/config/quotas`);
+        _quotaConfig = await resp.json();
+        renderQuotaSources();
+        renderQuotaModels();
+        renderKillSwitches();
+    } catch (e) { console.error("Failed to load quotas", e); }
+}
+
+function renderQuotaSources() {
+    const container = document.getElementById("quota-source-list");
+    container.innerHTML = "";
+    for (const [source, limits] of Object.entries(_quotaConfig.source_limits || {})) {
+        const row = document.createElement("div");
+        row.className = "flex gap-2 mb-2 items-center";
+        row.innerHTML = `
+            <input type="text" value="${source}" class="input-sm quota-src-name" placeholder="source" style="width:120px">
+            <label class="muted">$/day</label>
+            <input type="number" value="${limits.daily_limit_usd ?? ''}" class="input-sm quota-src-daily" style="width:80px" step="0.01">
+            <label class="muted">$/mo</label>
+            <input type="number" value="${limits.monthly_limit_usd ?? ''}" class="input-sm quota-src-monthly" style="width:80px" step="0.01">
+            <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+        `;
+        container.appendChild(row);
+    }
+}
+
+function addQuotaSource() {
+    const container = document.getElementById("quota-source-list");
+    const row = document.createElement("div");
+    row.className = "flex gap-2 mb-2 items-center";
+    row.innerHTML = `
+        <input type="text" class="input-sm quota-src-name" placeholder="source" style="width:120px">
+        <label class="muted">$/day</label>
+        <input type="number" class="input-sm quota-src-daily" style="width:80px" step="0.01">
+        <label class="muted">$/mo</label>
+        <input type="number" class="input-sm quota-src-monthly" style="width:80px" step="0.01">
+        <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+    `;
+    container.appendChild(row);
+}
+
+function renderQuotaModels() {
+    const container = document.getElementById("quota-model-list");
+    container.innerHTML = "";
+    for (const [model, limits] of Object.entries(_quotaConfig.model_limits || {})) {
+        const row = document.createElement("div");
+        row.className = "flex gap-2 mb-2 items-center";
+        row.innerHTML = `
+            <input type="text" value="${model}" class="input-sm quota-model-name" placeholder="model" style="width:180px">
+            <label class="muted">calls/day</label>
+            <input type="number" value="${limits.daily_call_limit ?? ''}" class="input-sm quota-model-daily" style="width:80px">
+            <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+        `;
+        container.appendChild(row);
+    }
+}
+
+function addQuotaModel() {
+    const container = document.getElementById("quota-model-list");
+    const row = document.createElement("div");
+    row.className = "flex gap-2 mb-2 items-center";
+    row.innerHTML = `
+        <input type="text" class="input-sm quota-model-name" placeholder="model" style="width:180px">
+        <label class="muted">calls/day</label>
+        <input type="number" class="input-sm quota-model-daily" style="width:80px">
+        <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+    `;
+    container.appendChild(row);
+}
+
+function renderKillSwitches() {
+    const container = document.getElementById("quota-kill-list");
+    container.innerHTML = "";
+    for (const source of (_quotaConfig.kill_switches || [])) {
+        const row = document.createElement("div");
+        row.className = "flex gap-2 mb-2 items-center";
+        row.innerHTML = `
+            <input type="text" value="${source}" class="input-sm kill-switch-name" placeholder="source" style="width:160px">
+            <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+        `;
+        container.appendChild(row);
+    }
+}
+
+function addKillSwitch() {
+    const container = document.getElementById("quota-kill-list");
+    const row = document.createElement("div");
+    row.className = "flex gap-2 mb-2 items-center";
+    row.innerHTML = `
+        <input type="text" class="input-sm kill-switch-name" placeholder="source" style="width:160px">
+        <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+    `;
+    container.appendChild(row);
+}
+
+async function saveQuotas() {
+    const source_limits = {};
+    document.querySelectorAll("#quota-source-list > div").forEach(row => {
+        const name = row.querySelector(".quota-src-name").value.trim();
+        if (!name) return;
+        const daily = row.querySelector(".quota-src-daily").value;
+        const monthly = row.querySelector(".quota-src-monthly").value;
+        const limits = {};
+        if (daily) limits.daily_limit_usd = parseFloat(daily);
+        if (monthly) limits.monthly_limit_usd = parseFloat(monthly);
+        source_limits[name] = limits;
+    });
+
+    const model_limits = {};
+    document.querySelectorAll("#quota-model-list > div").forEach(row => {
+        const name = row.querySelector(".quota-model-name").value.trim();
+        if (!name) return;
+        const daily = row.querySelector(".quota-model-daily").value;
+        if (daily) model_limits[name] = { daily_call_limit: parseInt(daily) };
+    });
+
+    const kill_switches = [];
+    document.querySelectorAll("#quota-kill-list > div").forEach(row => {
+        const name = row.querySelector(".kill-switch-name").value.trim();
+        if (name) kill_switches.push(name);
+    });
+
+    const resp = await fetch(`${BASE}/api/config/quotas`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_limits, model_limits, kill_switches }),
+    });
+    const status = document.getElementById("quota-save-status");
+    status.textContent = resp.ok ? "Saved!" : "Error";
+    setTimeout(() => { status.textContent = ""; }, 2000);
+}
 
 // Start on dashboard — must be last so all let/const variables are initialized
 switchPage('dashboard');

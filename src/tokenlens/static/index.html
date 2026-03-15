@@ -101,6 +101,25 @@
           </label>
           <button id="saveBudget" class="btn btn--primary btn--sm">Save Budget</button>
         </div>
+        <!-- Quotas -->
+        <div class="settings-section">
+            <h3>Per-Source Quotas</h3>
+            <p class="muted">Set spend limits per source and call limits per model.</p>
+            <div id="quota-source-list"></div>
+            <button class="btn btn-sm" onclick="addQuotaSource()">+ Add Source Limit</button>
+
+            <h4 style="margin-top:1rem">Per-Model Call Limits</h4>
+            <div id="quota-model-list"></div>
+            <button class="btn btn-sm" onclick="addQuotaModel()">+ Add Model Limit</button>
+
+            <h4 style="margin-top:1rem">Kill Switches</h4>
+            <p class="muted">Pause all traffic from a source.</p>
+            <div id="quota-kill-list"></div>
+            <button class="btn btn-sm" onclick="addKillSwitch()">+ Add Kill Switch</button>
+
+            <button class="btn btn-primary" style="margin-top:1rem" onclick="saveQuotas()">Save Quotas</button>
+            <span id="quota-save-status" class="muted"></span>
+        </div>
         <div class="settings-section">
           <h4>Custom Pricing ($/MTok)</h4>
           <div class="table-scroll">
