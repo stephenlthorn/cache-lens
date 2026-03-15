@@ -26,6 +26,7 @@
         <button class="page-tab" data-page="deepdive">Deep Dive</button>
         <button class="page-tab" data-page="recommendations">Insights</button>
         <button class="page-tab" data-page="analyze">Analyze</button>
+        <button class="page-tab" data-page="playground">Playground</button>
       </nav>
 
       <button class="btn btn--ghost btn--sm" id="settingsToggle" title="Settings">&#9881; Settings</button>
@@ -661,6 +662,62 @@
       </section>
 
       <div id="error" class="alert hidden"></div>
+    </div>
+
+    <!-- PAGE: Playground -->
+    <div id="page-playground" class="page-content hidden">
+      <div class="card" style="max-width:900px;margin:0 auto">
+        <h2>Prompt Playground</h2>
+        <p class="muted">Test prompts against any configured model. Requests flow through the proxy for tracking.</p>
+
+        <div class="flex gap-4" style="margin-top:1rem">
+          <div style="flex:1">
+            <label class="muted">Provider</label>
+            <select id="pg-provider" class="input-sm" style="width:100%">
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="google">Google</option>
+            </select>
+          </div>
+          <div style="flex:2">
+            <label class="muted">Model</label>
+            <input type="text" id="pg-model" class="input-sm" value="claude-sonnet-4-6" style="width:100%">
+          </div>
+        </div>
+
+        <div class="flex gap-4" style="margin-top:0.5rem">
+          <div style="flex:1">
+            <label class="muted">Temperature: <span id="pg-temp-val">1.0</span></label>
+            <input type="range" id="pg-temperature" min="0" max="2" step="0.1" value="1.0"
+              oninput="document.getElementById('pg-temp-val').textContent=this.value">
+          </div>
+          <div style="flex:1">
+            <label class="muted">Max Tokens</label>
+            <input type="number" id="pg-max-tokens" class="input-sm" value="1024" style="width:100%">
+          </div>
+          <div style="flex:1">
+            <label class="muted">API Key</label>
+            <input type="password" id="pg-api-key" class="input-sm" placeholder="sk-..." style="width:100%">
+          </div>
+        </div>
+
+        <div style="margin-top:1rem">
+          <label class="muted">Prompt</label>
+          <textarea id="pg-prompt" rows="6" class="input-sm" style="width:100%;font-family:monospace"
+            placeholder="Type your prompt here..."></textarea>
+        </div>
+
+        <div class="flex gap-2 items-center" style="margin-top:0.5rem">
+          <button class="btn btn--primary btn--sm" onclick="playgroundPreview()">Cost Preview</button>
+          <button class="btn btn--primary btn--sm" onclick="playgroundRun()">Run</button>
+          <span id="pg-cost-preview" class="muted"></span>
+        </div>
+
+        <div id="pg-result" style="margin-top:1rem;display:none">
+          <label class="muted">Response</label>
+          <pre id="pg-response" style="background:var(--bg1);padding:1rem;border-radius:8px;white-space:pre-wrap;max-height:400px;overflow:auto"></pre>
+        </div>
+      </div>
     </div>
   </main>
 

@@ -1164,3 +1164,33 @@ def test_put_and_get_guardrails(client: TestClient) -> None:
     assert data["custom_patterns"][0]["name"] == "api_key"
     assert data["custom_patterns"][0]["pattern"] == "sk-.*"
     assert data["custom_patterns"][0]["action"] == "block"
+
+
+# ---------------------------------------------------------------------------
+# Playground endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_playground_run_validates_input(client: TestClient) -> None:
+    """POST /api/playground/run with empty body should return 400."""
+    resp = client.post("/api/playground/run", json={})
+    assert resp.status_code == 400
+    body = resp.json()
+    assert "error" in body
+
+
+def test_playground_run_returns_cost_preview(client: TestClient) -> None:
+    """POST /api/playground/run with preview_only=True returns estimated cost."""
+    resp = client.post("/api/playground/run", json={
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
+        "preview_only": True,
+        "messages": [{"role": "user", "content": "Hello"}],
+        "max_tokens": 100,
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "estimated_cost_usd" in data
+    assert "estimated_input_tokens" in data
+    assert "estimated_max_output_tokens" in data
+    assert data["estimated_max_output_tokens"] == 100

@@ -2021,5 +2021,52 @@ async function saveGuardrails() {
     setTimeout(() => { status.textContent = ""; }, 2000);
 }
 
+// --- Playground ---
+
+async function playgroundPreview() {
+    const body = _buildPlaygroundBody(true);
+    const resp = await fetch(`${BASE}/api/playground/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    document.getElementById("pg-cost-preview").textContent =
+        `~${data.estimated_input_tokens} input tokens, ~$${data.estimated_cost_usd?.toFixed(6) || '?'}`;
+}
+
+async function playgroundRun() {
+    const body = _buildPlaygroundBody(false);
+    document.getElementById("pg-cost-preview").textContent = "Running...";
+    const resp = await fetch(`${BASE}/api/playground/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    document.getElementById("pg-result").style.display = "block";
+    if (data.error) {
+        document.getElementById("pg-response").textContent = `Error: ${data.error}`;
+    } else {
+        const text = data.content?.[0]?.text
+            || data.choices?.[0]?.message?.content
+            || JSON.stringify(data, null, 2);
+        document.getElementById("pg-response").textContent = text;
+    }
+    document.getElementById("pg-cost-preview").textContent = "";
+}
+
+function _buildPlaygroundBody(previewOnly) {
+    return {
+        provider: document.getElementById("pg-provider").value,
+        model: document.getElementById("pg-model").value,
+        messages: [{ role: "user", content: document.getElementById("pg-prompt").value }],
+        max_tokens: parseInt(document.getElementById("pg-max-tokens").value) || 1024,
+        temperature: parseFloat(document.getElementById("pg-temperature").value) || 1.0,
+        api_key: document.getElementById("pg-api-key").value,
+        preview_only: previewOnly,
+    };
+}
+
 // Start on dashboard — must be last so all let/const variables are initialized
 switchPage('dashboard');

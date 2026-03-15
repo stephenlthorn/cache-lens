@@ -962,6 +962,83 @@ def create_app(
             ws_clients.discard(websocket)
 
     # ------------------------------------------------------------------
+    # Playground
+    # ------------------------------------------------------------------
+
+    @app.post("/api/playground/run")
+    async def api_playground_run(request: Request) -> JSONResponse:
+        body = await request.json()
+        provider = body.get("provider")
+        model = body.get("model")
+        messages = body.get("messages")
+        max_tokens = body.get("max_tokens", 1024)
+        temperature = body.get("temperature", 1.0)
+        preview_only = body.get("preview_only", False)
+
+        if not provider or not model or not messages:
+            return JSONResponse(status_code=400, content={
+                "error": "provider, model, and messages are required",
+            })
+
+        p: PricingTable = request.app.state.pricing
+
+        try:
+            import tiktoken
+            enc = tiktoken.get_encoding("cl100k_base")
+            input_tok = sum(
+                len(enc.encode(m.get("content", "") if isinstance(m.get("content"), str) else ""))
+                for m in messages
+            )
+        except Exception:
+            input_tok = sum(len(str(m.get("content", ""))) // 4 for m in messages)
+
+        estimated = p.cost_usd(provider, model, input_tok, max_tokens, 0, 0)
+
+        if preview_only:
+            return JSONResponse(content={
+                "estimated_input_tokens": input_tok,
+                "estimated_max_output_tokens": max_tokens,
+                "estimated_cost_usd": round(estimated, 6),
+            })
+
+        from tokenlens.proxy import PROVIDER_URLS
+        if provider not in PROVIDER_URLS:
+            return JSONResponse(status_code=400, content={"error": f"unknown provider: {provider}"})
+
+        req_body = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        endpoint = "/v1/messages" if provider == "anthropic" else "/v1/chat/completions"
+        proxy_path = f"/proxy/{provider}/playground{endpoint}"
+
+        api_key = body.get("api_key", "")
+        proxy_headers: dict[str, str] = {"content-type": "application/json"}
+        if provider == "anthropic":
+            proxy_headers["x-api-key"] = api_key
+            proxy_headers["anthropic-version"] = "2023-06-01"
+        else:
+            proxy_headers["authorization"] = f"Bearer {api_key}"
+
+        s: UsageStore = request.app.state.store
+        resp = await handle_proxy_request(
+            path=proxy_path,
+            method="POST",
+            headers=proxy_headers,
+            body=json.dumps(req_body).encode(),
+            store=s,
+            pricing=p,
+        )
+
+        return JSONResponse(
+            status_code=resp.status_code,
+            content=json.loads(resp.body) if resp.body else {},
+        )
+
+    # ------------------------------------------------------------------
     # Proxy routes
     # ------------------------------------------------------------------
 
