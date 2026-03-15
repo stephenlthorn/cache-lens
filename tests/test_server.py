@@ -1124,3 +1124,43 @@ def test_put_and_get_routing(client: TestClient) -> None:
     assert data["fallback_chains"]["anthropic"] == ["openai"]
     assert data["weights"]["my-agent"]["claude-haiku-4-5-20251001"] == 70
     assert data["weights"]["my-agent"]["claude-sonnet-4-6"] == 30
+
+
+# ---------------------------------------------------------------------------
+# /api/config/guardrails (Task 3.5)
+# ---------------------------------------------------------------------------
+
+
+def test_get_guardrails_empty(client: TestClient) -> None:
+    """GET /api/config/guardrails returns default empty config when nothing has been set."""
+    resp = client.get("/api/config/guardrails")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["pii_enabled"] is False
+    assert data["injection_enabled"] is False
+    assert data["custom_patterns"] == []
+    assert data["action"] == "warn"
+
+
+def test_put_and_get_guardrails(client: TestClient) -> None:
+    """PUT /api/config/guardrails persists and GET /api/config/guardrails retrieves it."""
+    config = {
+        "pii_enabled": True,
+        "injection_enabled": True,
+        "custom_patterns": [{"name": "api_key", "pattern": "sk-.*", "action": "block"}],
+        "action": "warn",
+    }
+    resp = client.put("/api/config/guardrails", json=config)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+    resp = client.get("/api/config/guardrails")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["pii_enabled"] is True
+    assert data["injection_enabled"] is True
+    assert data["action"] == "warn"
+    assert len(data["custom_patterns"]) == 1
+    assert data["custom_patterns"][0]["name"] == "api_key"
+    assert data["custom_patterns"][0]["pattern"] == "sk-.*"
+    assert data["custom_patterns"][0]["action"] == "block"

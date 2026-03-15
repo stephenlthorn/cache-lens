@@ -1356,6 +1356,7 @@ if (settingsToggle && settingsPanel) {
       await loadPricingSettings();
       await loadQuotas();
       await loadRouting();
+      await loadGuardrails();
     }
   });
 }
@@ -1945,6 +1946,77 @@ async function saveRouting() {
         body: JSON.stringify({ aliases, fallback_chains, weights }),
     });
     const status = document.getElementById("routing-save-status");
+    status.textContent = resp.ok ? "Saved!" : "Error";
+    setTimeout(() => { status.textContent = ""; }, 2000);
+}
+
+// --- Guardrails Management ---
+async function loadGuardrails() {
+    try {
+        const resp = await fetch(`${BASE}/api/config/guardrails`);
+        const config = await resp.json();
+        document.getElementById("gr-pii-enabled").checked = config.pii_enabled;
+        document.getElementById("gr-injection-enabled").checked = config.injection_enabled;
+        document.getElementById("gr-action").value = config.action || "warn";
+        renderCustomRules(config.custom_patterns || []);
+    } catch (e) { console.error("Failed to load guardrails", e); }
+}
+
+function renderCustomRules(patterns) {
+    const container = document.getElementById("gr-custom-list");
+    container.innerHTML = "";
+    for (const rule of patterns) {
+        const row = document.createElement("div");
+        row.className = "flex gap-2 mb-2 items-center";
+        row.innerHTML = `
+            <input type="text" value="${rule.name || ''}" class="input-sm gr-rule-name" placeholder="name" style="width:100px">
+            <input type="text" value="${rule.pattern || ''}" class="input-sm gr-rule-pattern" placeholder="regex" style="width:200px">
+            <select class="input-sm gr-rule-action" style="width:80px">
+                <option value="warn" ${rule.action === 'warn' ? 'selected' : ''}>Warn</option>
+                <option value="block" ${rule.action === 'block' ? 'selected' : ''}>Block</option>
+            </select>
+            <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">&#x2715;</button>
+        `;
+        container.appendChild(row);
+    }
+}
+
+function addCustomRule() {
+    const container = document.getElementById("gr-custom-list");
+    const row = document.createElement("div");
+    row.className = "flex gap-2 mb-2 items-center";
+    row.innerHTML = `
+        <input type="text" class="input-sm gr-rule-name" placeholder="name" style="width:100px">
+        <input type="text" class="input-sm gr-rule-pattern" placeholder="regex" style="width:200px">
+        <select class="input-sm gr-rule-action" style="width:80px">
+            <option value="warn">Warn</option>
+            <option value="block">Block</option>
+        </select>
+        <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">&#x2715;</button>
+    `;
+    container.appendChild(row);
+}
+
+async function saveGuardrails() {
+    const custom_patterns = [];
+    document.querySelectorAll("#gr-custom-list > div").forEach(row => {
+        const name = row.querySelector(".gr-rule-name").value.trim();
+        const pattern = row.querySelector(".gr-rule-pattern").value.trim();
+        const action = row.querySelector(".gr-rule-action").value;
+        if (name && pattern) custom_patterns.push({ name, pattern, action });
+    });
+
+    const resp = await fetch(`${BASE}/api/config/guardrails`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            pii_enabled: document.getElementById("gr-pii-enabled").checked,
+            injection_enabled: document.getElementById("gr-injection-enabled").checked,
+            action: document.getElementById("gr-action").value,
+            custom_patterns,
+        }),
+    });
+    const status = document.getElementById("gr-save-status");
     status.textContent = resp.ok ? "Saved!" : "Error";
     setTimeout(() => { status.textContent = ""; }, 2000);
 }

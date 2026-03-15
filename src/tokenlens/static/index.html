@@ -142,6 +142,36 @@
             <button class="btn btn-primary" style="margin-top:1rem" onclick="saveRouting()">Save Routing</button>
             <span id="routing-save-status" class="muted"></span>
         </div>
+        <!-- Guardrails -->
+        <div class="settings-section">
+            <h3>Content Guardrails</h3>
+
+            <label class="flex items-center gap-2">
+                <input type="checkbox" id="gr-pii-enabled">
+                <span>PII Detection</span>
+                <span class="muted">(email, phone, SSN, credit card)</span>
+            </label>
+
+            <label class="flex items-center gap-2" style="margin-top:0.5rem">
+                <input type="checkbox" id="gr-injection-enabled">
+                <span>Prompt Injection Detection</span>
+            </label>
+
+            <div style="margin-top:0.5rem">
+                <label class="muted">Default Action:</label>
+                <select id="gr-action" class="input-sm" style="width:100px">
+                    <option value="warn">Warn</option>
+                    <option value="block">Block</option>
+                </select>
+            </div>
+
+            <h4 style="margin-top:1rem">Custom Regex Rules</h4>
+            <div id="gr-custom-list"></div>
+            <button class="btn btn-sm" onclick="addCustomRule()">+ Add Rule</button>
+
+            <button class="btn btn-primary" style="margin-top:1rem" onclick="saveGuardrails()">Save Guardrails</button>
+            <span id="gr-save-status" class="muted"></span>
+        </div>
         <div class="settings-section">
           <h4>Custom Pricing ($/MTok)</h4>
           <div class="table-scroll">

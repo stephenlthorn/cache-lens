@@ -707,6 +707,41 @@ def create_app(
         s.set_setting("routing.config", json.dumps(config))
         return JSONResponse(content={"status": "ok"})
 
+    # ------------------------------------------------------------------
+    # Settings: Guardrails (PII, injection detection, custom rules)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/config/guardrails")
+    def api_get_guardrails(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        config_str = s.get_setting("guardrails.config")
+        if config_str:
+            try:
+                config = json.loads(config_str)
+            except (json.JSONDecodeError, ValueError):
+                config = {}
+        else:
+            config = {}
+        return JSONResponse(content={
+            "pii_enabled": config.get("pii_enabled", False),
+            "injection_enabled": config.get("injection_enabled", False),
+            "custom_patterns": config.get("custom_patterns", []),
+            "action": config.get("action", "warn"),
+        })
+
+    @app.put("/api/config/guardrails")
+    async def api_set_guardrails(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        body = await request.json()
+        config = {
+            "pii_enabled": body.get("pii_enabled", False),
+            "injection_enabled": body.get("injection_enabled", False),
+            "custom_patterns": body.get("custom_patterns", []),
+            "action": body.get("action", "warn"),
+        }
+        s.set_setting("guardrails.config", json.dumps(config))
+        return JSONResponse(content={"status": "ok"})
+
     # --- Custom Pricing ---
 
     @app.get("/api/settings/pricing")
