@@ -396,3 +396,100 @@ def test_proxy_non_streaming_strips_content_encoding(
             "content-encoding must be stripped to prevent zlib double-decompression"
         )
         assert r.json()["model"] == "claude-sonnet-4-6"
+
+
+# ---------------------------------------------------------------------------
+# Gateway pipeline integration tests (Tasks 5.1 & 5.2)
+# ---------------------------------------------------------------------------
+
+import json as _json
+import asyncio as _asyncio
+from unittest.mock import MagicMock, AsyncMock, patch
+
+from tokenlens.proxy import handle_proxy_request
+from tokenlens.store import UsageStore as _UsageStore
+from tokenlens.pricing import PricingTable as _PricingTable
+
+
+@pytest.fixture
+def gateway_store(tmp_path):
+    s = _UsageStore(db_path=tmp_path / "test.db")
+    # Configure: quotas + guardrails + routing
+    s.set_setting("quotas.config", _json.dumps({
+        "source_limits": {"expensive-agent": {"daily_limit_usd": 10.0}},
+        "model_limits": {},
+        "kill_switches": ["banned-agent"],
+    }))
+    s.set_setting("guardrails.config", _json.dumps({
+        "pii_enabled": True,
+        "injection_enabled": True,
+        "custom_patterns": [],
+        "action": "block",
+    }))
+    s.set_setting("routing.config", _json.dumps({
+        "aliases": {"gpt-4": "claude-sonnet-4-6"},
+        "fallback_chains": {},
+        "weights": {},
+    }))
+    return s
+
+
+def test_gateway_kill_switch_blocks(gateway_store):
+    pricing = _PricingTable()
+    resp = _asyncio.run(handle_proxy_request(
+        path="/proxy/anthropic/banned-agent/v1/messages",
+        method="POST",
+        headers={"content-type": "application/json"},
+        body=b'{"model": "claude-sonnet-4-6", "messages": []}',
+        store=gateway_store,
+        pricing=pricing,
+    ))
+    assert resp.status_code == 429
+    assert b"kill switch" in resp.body
+
+
+def test_gateway_pii_blocks(gateway_store):
+    pricing = _PricingTable()
+    resp = _asyncio.run(handle_proxy_request(
+        path="/proxy/anthropic/clean-agent/v1/messages",
+        method="POST",
+        headers={"content-type": "application/json"},
+        body=_json.dumps({
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "My SSN is 123-45-6789"}],
+        }).encode(),
+        store=gateway_store,
+        pricing=pricing,
+    ))
+    assert resp.status_code == 400
+    assert b"guardrail" in resp.body.lower()
+
+
+def test_gateway_clean_request_passes(gateway_store):
+    pricing = _PricingTable()
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"usage": {"input_tokens": 10, "output_tokens": 5}, "model": "claude-sonnet-4-6"}'
+    mock_response.headers = {}
+    mock_response.is_success = True
+
+    with patch("tokenlens.proxy.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        resp = _asyncio.run(handle_proxy_request(
+            path="/proxy/anthropic/clean-agent/v1/messages",
+            method="POST",
+            headers={"content-type": "application/json"},
+            body=_json.dumps({
+                "model": "claude-sonnet-4-6",
+                "messages": [{"role": "user", "content": "Hello world"}],
+            }).encode(),
+            store=gateway_store,
+            pricing=pricing,
+        ))
+        assert resp.status_code == 200
