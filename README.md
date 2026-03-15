@@ -43,6 +43,10 @@ export GOOGLE_AI_BASE_URL="http://localhost:8420/proxy/google"
 
 ---
 
+## Architecture
+
+![TokenLens Architecture](docs/architecture.png)
+
 ## How It Works
 
 ```
