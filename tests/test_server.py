@@ -1057,3 +1057,35 @@ def test_anomalies_endpoint_returns_list(client: TestClient) -> None:
     resp = client.get("/api/usage/anomalies")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+# ---------------------------------------------------------------------------
+# /api/config/quotas (Task 1.4)
+# ---------------------------------------------------------------------------
+
+
+def test_get_quotas_empty(client: TestClient) -> None:
+    """GET /api/config/quotas returns empty config when nothing has been set."""
+    resp = client.get("/api/config/quotas")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source_limits"] == {}
+    assert data["model_limits"] == {}
+    assert data["kill_switches"] == []
+
+
+def test_put_and_get_quotas(client: TestClient) -> None:
+    """PUT /api/config/quotas persists and GET /api/config/quotas retrieves it."""
+    config = {
+        "source_limits": {"my-agent": {"daily_limit_usd": 50.0}},
+        "model_limits": {"claude-opus-4-6": {"daily_call_limit": 100}},
+        "kill_switches": ["bad-agent"],
+    }
+    resp = client.put("/api/config/quotas", json=config)
+    assert resp.status_code == 200
+
+    resp = client.get("/api/config/quotas")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source_limits"]["my-agent"]["daily_limit_usd"] == 50.0
+    assert data["kill_switches"] == ["bad-agent"]

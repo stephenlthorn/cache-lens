@@ -641,6 +641,39 @@ def create_app(
             s.set_setting("budget.enabled", "true" if body["enabled"] else "false")
         return JSONResponse(content={"status": "ok"})
 
+    # ------------------------------------------------------------------
+    # Settings: Quotas (per-source + per-model limits)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/config/quotas")
+    def api_get_quotas(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        config_str = s.get_setting("quotas.config")
+        if config_str:
+            try:
+                config = json.loads(config_str)
+            except (json.JSONDecodeError, ValueError):
+                config = {}
+        else:
+            config = {}
+        return JSONResponse(content={
+            "source_limits": config.get("source_limits", {}),
+            "model_limits": config.get("model_limits", {}),
+            "kill_switches": config.get("kill_switches", []),
+        })
+
+    @app.put("/api/config/quotas")
+    async def api_set_quotas(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        body = await request.json()
+        config = {
+            "source_limits": body.get("source_limits", {}),
+            "model_limits": body.get("model_limits", {}),
+            "kill_switches": body.get("kill_switches", []),
+        }
+        s.set_setting("quotas.config", json.dumps(config))
+        return JSONResponse(content={"status": "ok"})
+
     # --- Custom Pricing ---
 
     @app.get("/api/settings/pricing")
