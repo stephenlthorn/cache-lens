@@ -464,8 +464,8 @@ class UsageStore:
         day_start = _date_to_ts(today)
         with self._lock:
             row = self._con.execute(
-                "SELECT COUNT(*) FROM calls WHERE model = ? AND ts >= ?",
-                (model, day_start),
+                "SELECT COUNT(*) FROM calls WHERE model = ? AND ts >= ? AND ts < ?",
+                (model, day_start, day_start + 86400),
             ).fetchone()
         return int(row[0])
 
