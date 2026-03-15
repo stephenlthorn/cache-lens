@@ -18,6 +18,7 @@ from tokenlens.detector import ParsedProxy, parse_proxy_path
 from tokenlens.heatmap import compute_heatmap
 from tokenlens.pricing import PricingTable
 from tokenlens.quotas import check_quotas
+from tokenlens.router import parse_routing_config, resolve_model_alias, select_weighted_model
 from tokenlens.store import UsageStore
 from tokenlens.waste_detector import detect_waste, WasteItem
 
@@ -491,6 +492,30 @@ async def handle_proxy_request(
                     media_type="application/json",
                     headers={"Retry-After": str(quota_result.retry_after)},
                 )
+
+    # Routing: model aliasing + weighted selection
+    # Note: modifies parsed_body["model"] and re-serializes body intentionally
+    routing_config_str = store.get_setting("routing.config")
+    routing_config = None
+    if routing_config_str:
+        try:
+            routing_config = parse_routing_config(json.loads(routing_config_str))
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    if routing_config is not None and parsed_body is not None:
+        # Weighted model selection (if configured for this source)
+        weighted_model = select_weighted_model(parsed.source, routing_config)
+        if weighted_model is not None:
+            parsed_body["model"] = weighted_model
+            body = json.dumps(parsed_body).encode()
+
+        # Model aliasing
+        current_model = parsed_body.get("model", "")
+        aliased_model = resolve_model_alias(current_model, routing_config)
+        if aliased_model != current_model:
+            parsed_body["model"] = aliased_model
+            body = json.dumps(parsed_body).encode()
 
     # Determine streaming: Google uses path (streamGenerateContent), others use body
     if parsed.provider == "google":

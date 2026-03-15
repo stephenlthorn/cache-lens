@@ -790,3 +790,56 @@ def test_proxy_blocks_killed_source():
     ))
     assert resp.status_code == 429
     assert b"kill switch" in resp.body
+
+
+def test_proxy_applies_model_alias():
+    """When routing is configured with an alias, the model in the request body should be swapped."""
+    import asyncio
+
+    store = MagicMock()
+    store.get_setting.side_effect = lambda key: {
+        "budget.enabled": "false",
+        "quotas.config": None,
+        "routing.config": '{"aliases": {"gpt-4": "claude-sonnet-4-6"}, "fallback_chains": {}, "weights": {}}',
+        "dedup.enabled": "false",
+    }.get(key)
+    store.insert_call.return_value = 1
+    store.daily_spend_by_source.return_value = 0.0
+    store.monthly_spend_by_source.return_value = 0.0
+    store.model_call_count_today.return_value = 0
+
+    pricing = MagicMock()
+    pricing.cost_usd.return_value = 0.001
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"usage": {"input_tokens": 10, "output_tokens": 5}, "model": "claude-sonnet-4-6"}'
+    mock_response.headers = {}
+    mock_response.is_success = True
+
+    captured_bodies = []
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        async def capture_request(method, url, *, headers=None, content=None):
+            captured_bodies.append(content)
+            return mock_response
+
+        mock_client.request = capture_request
+        mock_client_cls.return_value = mock_client
+
+        asyncio.run(handle_proxy_request(
+            path="/proxy/anthropic/test/v1/messages",
+            method="POST",
+            headers={"content-type": "application/json"},
+            body=b'{"model": "gpt-4", "messages": []}',
+            store=store,
+            pricing=pricing,
+        ))
+
+    assert len(captured_bodies) > 0
+    forwarded = json.loads(captured_bodies[0])
+    assert forwarded["model"] == "claude-sonnet-4-6"
