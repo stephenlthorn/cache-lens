@@ -726,3 +726,26 @@ def test_insert_waste_items_empty_list(tmp_path):
     store.insert_waste_items(call_id=call_id, items=[])  # should not raise
     rows = store.get_waste_for_call(call_id)
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# Per-model call count today (Task 1.1)
+# ---------------------------------------------------------------------------
+
+
+def test_model_call_count_today_empty(store):
+    assert store.model_call_count_today("claude-opus-4-6") == 0
+
+
+def test_model_call_count_today(store):
+    _insert_call(store, model="claude-opus-4-6", request_hash="m1")
+    _insert_call(store, model="claude-opus-4-6", request_hash="m2")
+    _insert_call(store, model="claude-sonnet-4-6", request_hash="m3")
+    assert store.model_call_count_today("claude-opus-4-6") == 2
+    assert store.model_call_count_today("claude-sonnet-4-6") == 1
+
+
+def test_model_call_count_today_excludes_old(store):
+    old_ts = int(time.time()) - 2 * 86400
+    _insert_call(store, ts=old_ts, model="claude-opus-4-6", request_hash="m4")
+    assert store.model_call_count_today("claude-opus-4-6") == 0

@@ -458,6 +458,17 @@ class UsageStore:
             ).fetchone()
         return (agg[0] or 0.0) + (live[0] or 0.0)
 
+    def model_call_count_today(self, model: str) -> int:
+        """Return number of calls to a specific model today."""
+        today = date.today().isoformat()
+        day_start = _date_to_ts(today)
+        with self._lock:
+            row = self._con.execute(
+                "SELECT COUNT(*) FROM calls WHERE model = ? AND ts >= ?",
+                (model, day_start),
+            ).fetchone()
+        return int(row[0])
+
     # ------------------------------------------------------------------
     # Cache hit rate trend (Phase 3)
     # ------------------------------------------------------------------
