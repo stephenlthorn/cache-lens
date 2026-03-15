@@ -1,13 +1,14 @@
 # TokenLens
 
-**AI cost intelligence — local-first.**
+**AI cost intelligence + gateway — local-first.**
 
-TokenLens is a transparent proxy + dashboard that tracks every AI API call, shows you exactly where your money goes, detects waste, and finds ways to spend less.
+TokenLens is a transparent proxy + dashboard that tracks every AI API call, shows you exactly where your money goes, detects waste, finds ways to spend less — and now acts as a full AI gateway with quota enforcement, multi-provider routing, and input/output guardrails.
 
 - **Zero config** — install, point your SDK, done
 - **100% local** — your data never leaves your machine
 - **Real-time** — live WebSocket feed of every API call
 - **Works with** Anthropic, OpenAI, and Google AI
+- **Gateway features** — quota enforcement, model aliasing, fallback routing, PII/injection guardrails
 
 ![TokenLens Dashboard](docs/dashboard.png)
 ![TokenLens Insights](docs/insights.png)
@@ -98,6 +99,16 @@ Every SDK call flows through the TokenLens proxy. The proxy runs budget checks, 
 | **12-Check Engine** | Automated analysis: cache utilization, model costs, prompt sizes, waste, history bloat, model right-sizing, and more |
 | **Actionable Insights** | Each recommendation includes estimated savings impact |
 
+### Developer Playground
+
+| Feature | Description |
+|---------|-------------|
+| **Model Selector** | Choose any supported model from a dropdown |
+| **Temperature Control** | Slider to set temperature (0–1) |
+| **Cost Preview** | Estimated cost before you run the prompt |
+| **Live Execution** | Send prompts through the proxy and see the response in the dashboard |
+| **Source Tagging** | Requests are tagged as `playground` for cost attribution |
+
 ### Integrations
 
 | Feature | Description |
@@ -106,6 +117,22 @@ Every SDK call flows through the TokenLens proxy. The proxy runs budget checks, 
 | **Webhook Notifications** | HTTP callbacks on `call_recorded`, `cost_alert`, and `weekly_digest` events |
 | **Prometheus /metrics** | Standard exposition format for monitoring stacks |
 | **`tokenlens report`** | CLI command to print or export the weekly cost digest |
+
+### AI Gateway
+
+| Feature | Description |
+|---------|-------------|
+| **Kill Switches** | Instantly block all traffic from a specific source (tool/agent) |
+| **Per-Source Quota Enforcement** | Daily and monthly spend caps per source, with automatic request blocking |
+| **Per-Model Call Limits** | Daily call count caps per model to prevent runaway usage |
+| **Model Aliasing** | Transparently swap one model for another — callers see the alias, proxy uses the real model |
+| **Fallback Chains** | Retry on 5xx/429 with a priority-ordered list of fallback models |
+| **Weighted Load Balancing** | Distribute traffic across multiple models by percentage weight |
+| **Latency-Based Routing** | Automatically route to the lowest-latency provider based on recent P99 |
+| **PII Detection** | Detect email, phone, SSN, and credit card numbers in prompts and responses |
+| **Prompt Injection Detection** | Flag attempts to override system prompts or role-hijack the model |
+| **Custom Guardrail Rules** | Add your own regex patterns with warn or block actions |
+| **Request & Response Guardrails** | Guardrails apply to both the incoming prompt and the model's response |
 
 ### Proxy Features
 
@@ -194,6 +221,15 @@ All endpoints are served at `http://localhost:8420` (default port).
 | `GET/PUT` | `/api/settings/pricing` | Custom pricing overrides |
 | `GET/PUT` | `/api/settings/webhooks` | Webhook notification config |
 
+### Gateway
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET/PUT` | `/api/config/quotas` | Per-source quotas, per-model call limits, kill switches |
+| `GET/PUT` | `/api/config/routing` | Model aliases, fallback chains, weighted balancing, latency routing |
+| `GET/PUT` | `/api/config/guardrails` | PII detection, injection detection, custom regex rules |
+| `POST` | `/api/playground/run` | Execute a prompt through the proxy from the Developer Playground |
+
 ### Other
 
 | Method | Endpoint | Description |
@@ -235,6 +271,9 @@ TokenLens stores its data in `~/.tokenlens/`:
 | `logging.enabled` | `false` | Capture request/response bodies |
 | `dedup.enabled` | `false` | Enable request deduplication |
 | `dedup.ttl_seconds` | `60` | Dedup cache TTL |
+| `quotas.config` | — | Per-source quotas, per-model limits, kill switches (JSON blob) |
+| `routing.config` | — | Model aliases, fallback chains, weights, latency routing (JSON blob) |
+| `guardrails.config` | — | PII detection, injection detection, custom rules (JSON blob) |
 
 ---
 
@@ -243,12 +282,17 @@ TokenLens stores its data in `~/.tokenlens/`:
 ```
 Your App → SDK → TokenLens Proxy (localhost:8420) → AI Provider
                       ↓
-              1. Budget check (block if over limit)
-              2. Waste detection (whitespace, filler, redundant text)
-              3. Token heatmap (section breakdown: system/tools/context/history/query)
-              4. History bloat tracking (conversation efficiency)
-              5. Record call + cost to SQLite
-              6. Broadcast via WebSocket
+              1. Budget check (block if over global limit)
+              2. Quota check (block if source/model limit exceeded or kill switch active)
+              3. Routing (resolve alias → apply weighted/latency/fallback selection)
+              4. Request guardrails (scan prompt for PII / injection → warn or block)
+              5. Waste detection (whitespace, filler, redundant text)
+              6. Token heatmap (section breakdown: system/tools/context/history/query)
+              7. Deduplication check (return cached response if TTL hit)
+              8. Forward to upstream (retry fallback chain on 5xx/429)
+              9. Response guardrails (scan model output for PII → warn or block)
+             10. Record call + cost to SQLite
+             11. Broadcast via WebSocket
                       ↓
               Dashboard + tokenlens top CLI + Alerts + Webhooks
 ```
