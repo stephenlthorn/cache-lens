@@ -906,3 +906,35 @@ def test_proxy_retries_on_529_with_fallback_chain(tmp_path):
     assert len(call_urls) == 2
     assert "api.anthropic.com" in call_urls[0]
     assert "api.openai.com" in call_urls[1]
+
+
+def test_proxy_blocks_when_guardrail_action_is_block():
+    import asyncio
+
+    store = MagicMock()
+    store.get_setting.side_effect = lambda key: {
+        "budget.enabled": "false",
+        "quotas.config": None,
+        "routing.config": None,
+        "guardrails.config": '{"pii_enabled": true, "injection_enabled": false, "custom_patterns": [], "action": "block"}',
+        "dedup.enabled": "false",
+    }.get(key)
+    store.daily_spend_by_source.return_value = 0.0
+    store.monthly_spend_by_source.return_value = 0.0
+    store.model_call_count_today.return_value = 0
+
+    pricing = MagicMock()
+
+    resp = asyncio.run(handle_proxy_request(
+        path="/proxy/anthropic/test/v1/messages",
+        method="POST",
+        headers={"content-type": "application/json"},
+        body=json.dumps({
+            "model": "claude-sonnet-4-6",
+            "messages": [{"role": "user", "content": "Email me at user@example.com"}],
+        }).encode(),
+        store=store,
+        pricing=pricing,
+    ))
+    assert resp.status_code == 400
+    assert b"guardrail" in resp.body.lower()

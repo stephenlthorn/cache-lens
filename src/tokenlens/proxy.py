@@ -15,6 +15,7 @@ import httpx
 from fastapi.responses import Response
 
 from tokenlens.detector import ParsedProxy, parse_proxy_path
+from tokenlens.guardrails import parse_guardrail_config, scan_text
 from tokenlens.heatmap import compute_heatmap
 from tokenlens.pricing import PricingTable
 from tokenlens.quotas import check_quotas
@@ -516,6 +517,44 @@ async def handle_proxy_request(
         if aliased_model != current_model:
             parsed_body["model"] = aliased_model
             body = json.dumps(parsed_body).encode()
+
+    # Guardrail scan on request body
+    gr_config = None
+    guardrails_config_str = store.get_setting("guardrails.config")
+    if guardrails_config_str:
+        try:
+            gr_config = parse_guardrail_config(json.loads(guardrails_config_str))
+        except (json.JSONDecodeError, ValueError):
+            gr_config = None
+
+        if gr_config is not None and parsed_body is not None:
+            # Extract all text content from messages
+            text_parts: list[str] = []
+            for msg in (parsed_body.get("messages") or []):
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    text_parts.append(content)
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+            full_text = " ".join(text_parts)
+
+            if full_text:
+                gr_matches = scan_text(full_text, gr_config)
+                blocking = [m for m in gr_matches if m.action == "block"]
+                if blocking:
+                    return Response(
+                        status_code=400,
+                        content=json.dumps({
+                            "error": "TokenLens guardrail violation",
+                            "violations": [
+                                {"type": m.pattern_type, "name": m.pattern_name}
+                                for m in blocking
+                            ],
+                        }).encode(),
+                        media_type="application/json",
+                    )
 
     # Determine streaming: Google uses path (streamGenerateContent), others use body
     if parsed.provider == "google":
