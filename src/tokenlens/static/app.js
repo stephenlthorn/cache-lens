@@ -25,6 +25,14 @@ function switchPage(pageId) {
 
   if (pageId === 'dashboard') initDashboard();
   if (pageId === 'recommendations') loadRecommendations();
+  if (pageId === 'settings') {
+    loadAlertSettings();
+    loadBudgetSettings();
+    loadPricingSettings();
+    loadQuotas();
+    loadRouting();
+    loadGuardrails();
+  }
 }
 
 pageTabs.forEach(tab => {
@@ -1341,28 +1349,8 @@ async function loadForecast() {
   }
 }
 
-// ─── Settings Panel ─────────────────────────────────────────────────────────
-
-const settingsToggle = el('settingsToggle');
-const settingsPanel = el('settingsPanel');
-const settingsClose = el('settingsClose');
-
-if (settingsToggle && settingsPanel) {
-  settingsToggle.addEventListener('click', async () => {
-    settingsPanel.classList.toggle('hidden');
-    if (!settingsPanel.classList.contains('hidden')) {
-      await loadAlertSettings();
-      await loadBudgetSettings();
-      await loadPricingSettings();
-      await loadQuotas();
-      await loadRouting();
-      await loadGuardrails();
-    }
-  });
-}
-if (settingsClose && settingsPanel) {
-  settingsClose.addEventListener('click', () => settingsPanel.classList.add('hidden'));
-}
+// ─── Settings Page ──────────────────────────────────────────────────────────
+// Settings are loaded via switchPage('settings') above.
 
 async function loadAlertSettings() {
   try {

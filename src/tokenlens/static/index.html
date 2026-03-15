@@ -27,9 +27,8 @@
         <button class="page-tab" data-page="recommendations">Insights</button>
         <button class="page-tab" data-page="analyze">Analyze</button>
         <button class="page-tab" data-page="playground">Playground</button>
+        <button class="page-tab" data-page="settings">&#9881; Settings</button>
       </nav>
-
-      <button class="btn btn--ghost btn--sm" id="settingsToggle" title="Settings">&#9881; Settings</button>
 
       <div class="topbar__actions" id="analyzeActions">
         <button id="loadExample" class="btn btn--ghost btn--sm">Load example</button>
@@ -67,134 +66,6 @@
       </div>
     </div>
 
-    <!-- Settings Panel (overlay) -->
-    <div id="settingsPanel" class="settings-panel hidden">
-      <div class="settings-panel__inner">
-        <div class="settings-panel__header">
-          <h3>Settings</h3>
-          <button id="settingsClose" class="btn btn--ghost btn--sm">Close</button>
-        </div>
-        <div class="settings-section">
-          <h4>Cost Alerts</h4>
-          <label class="settings-row">
-            <span>Enable alerts</span>
-            <input type="checkbox" id="alertsEnabled" />
-          </label>
-          <label class="settings-row">
-            <span>Daily threshold ($)</span>
-            <input type="number" id="alertThreshold" class="filter-input" step="0.50" min="0" placeholder="5.00" />
-          </label>
-          <button id="saveAlerts" class="btn btn--primary btn--sm">Save Alerts</button>
-        </div>
-        <div class="settings-section">
-          <h4>Budget Caps</h4>
-          <label class="settings-row">
-            <span>Enable budget</span>
-            <input type="checkbox" id="budgetEnabled" />
-          </label>
-          <label class="settings-row">
-            <span>Daily limit ($)</span>
-            <input type="number" id="budgetDaily" class="filter-input" step="1.00" min="0" placeholder="10.00" />
-          </label>
-          <label class="settings-row">
-            <span>Monthly limit ($)</span>
-            <input type="number" id="budgetMonthly" class="filter-input" step="10.00" min="0" placeholder="100.00" />
-          </label>
-          <button id="saveBudget" class="btn btn--primary btn--sm">Save Budget</button>
-        </div>
-        <!-- Quotas -->
-        <div class="settings-section">
-            <h3>Per-Source Quotas</h3>
-            <p class="muted">Set spend limits per source and call limits per model.</p>
-            <div id="quota-source-list"></div>
-            <button class="btn btn-sm" onclick="addQuotaSource()">+ Add Source Limit</button>
-
-            <h4 style="margin-top:1rem">Per-Model Call Limits</h4>
-            <div id="quota-model-list"></div>
-            <button class="btn btn-sm" onclick="addQuotaModel()">+ Add Model Limit</button>
-
-            <h4 style="margin-top:1rem">Kill Switches</h4>
-            <p class="muted">Pause all traffic from a source.</p>
-            <div id="quota-kill-list"></div>
-            <button class="btn btn-sm" onclick="addKillSwitch()">+ Add Kill Switch</button>
-
-            <button class="btn btn-primary" style="margin-top:1rem" onclick="saveQuotas()">Save Quotas</button>
-            <span id="quota-save-status" class="muted"></span>
-        </div>
-        <!-- Routing -->
-        <div class="settings-section">
-            <h3>Model Routing</h3>
-
-            <h4>Model Aliases</h4>
-            <p class="muted">Transparently swap models. Requests for the "from" model will use the "to" model.</p>
-            <div id="alias-list"></div>
-            <button class="btn btn-sm" onclick="addAlias()">+ Add Alias</button>
-
-            <h4 style="margin-top:1rem">Fallback Chains</h4>
-            <p class="muted">If a provider returns 5xx/429, try the next provider in the chain.</p>
-            <div id="fallback-list"></div>
-            <button class="btn btn-sm" onclick="addFallback()">+ Add Chain</button>
-
-            <h4 style="margin-top:1rem">Weighted Load Balancing</h4>
-            <p class="muted">Split traffic for a source across models by weight (e.g., 70% Haiku / 30% Sonnet).</p>
-            <div id="weight-list"></div>
-            <button class="btn btn-sm" onclick="addWeight()">+ Add Weight Rule</button>
-
-            <button class="btn btn-primary" style="margin-top:1rem" onclick="saveRouting()">Save Routing</button>
-            <span id="routing-save-status" class="muted"></span>
-        </div>
-        <!-- Guardrails -->
-        <div class="settings-section">
-            <h3>Content Guardrails</h3>
-
-            <label class="flex items-center gap-2">
-                <input type="checkbox" id="gr-pii-enabled">
-                <span>PII Detection</span>
-                <span class="muted">(email, phone, SSN, credit card)</span>
-            </label>
-
-            <label class="flex items-center gap-2" style="margin-top:0.5rem">
-                <input type="checkbox" id="gr-injection-enabled">
-                <span>Prompt Injection Detection</span>
-            </label>
-
-            <div style="margin-top:0.5rem">
-                <label class="muted">Default Action:</label>
-                <select id="gr-action" class="input-sm" style="width:100px">
-                    <option value="warn">Warn</option>
-                    <option value="block">Block</option>
-                </select>
-            </div>
-
-            <h4 style="margin-top:1rem">Custom Regex Rules</h4>
-            <div id="gr-custom-list"></div>
-            <button class="btn btn-sm" onclick="addCustomRule()">+ Add Rule</button>
-
-            <button class="btn btn-primary" style="margin-top:1rem" onclick="saveGuardrails()">Save Guardrails</button>
-            <span id="gr-save-status" class="muted"></span>
-        </div>
-        <div class="settings-section">
-          <h4>Custom Pricing ($/MTok)</h4>
-          <div class="table-scroll">
-            <table class="data-table" id="pricingTable">
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th>Input</th>
-                  <th>Output</th>
-                  <th>Cache Read</th>
-                  <th>Cache Write</th>
-                </tr>
-              </thead>
-              <tbody id="pricingBody">
-                <tr><td colspan="5" class="table-empty">Loading&hellip;</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <button id="savePricing" class="btn btn--primary btn--sm">Save Pricing</button>
-        </div>
-      </div>
-    </div>
 
     <!-- PAGE: Dashboard -->
     <div id="page-dashboard" class="page-content">
@@ -664,6 +535,143 @@
       <div id="error" class="alert hidden"></div>
     </div>
 
+    <!-- PAGE: Settings -->
+    <div id="page-settings" class="page-content hidden">
+      <div style="max-width:800px;margin:0 auto;display:flex;flex-direction:column;gap:1.5rem">
+
+        <div class="card">
+          <h3>Cost Alerts</h3>
+          <label class="settings-row">
+            <span>Enable alerts</span>
+            <input type="checkbox" id="alertsEnabled" />
+          </label>
+          <label class="settings-row">
+            <span>Daily threshold ($)</span>
+            <input type="number" id="alertThreshold" class="filter-input" step="0.50" min="0" placeholder="5.00" />
+          </label>
+          <button id="saveAlerts" class="btn btn--primary btn--sm" style="margin-top:0.75rem">Save Alerts</button>
+        </div>
+
+        <div class="card">
+          <h3>Budget Caps</h3>
+          <label class="settings-row">
+            <span>Enable budget</span>
+            <input type="checkbox" id="budgetEnabled" />
+          </label>
+          <label class="settings-row">
+            <span>Daily limit ($)</span>
+            <input type="number" id="budgetDaily" class="filter-input" step="1.00" min="0" placeholder="10.00" />
+          </label>
+          <label class="settings-row">
+            <span>Monthly limit ($)</span>
+            <input type="number" id="budgetMonthly" class="filter-input" step="10.00" min="0" placeholder="100.00" />
+          </label>
+          <button id="saveBudget" class="btn btn--primary btn--sm" style="margin-top:0.75rem">Save Budget</button>
+        </div>
+
+        <div class="card">
+          <h3>Per-Source Quotas</h3>
+          <p class="muted">Set spend limits per source and call limits per model. Kill switches block all traffic from a source immediately.</p>
+
+          <h4 style="margin-top:1rem">Source Spend Limits</h4>
+          <div id="quota-source-list"></div>
+          <button class="btn btn--ghost btn--sm" style="margin-top:0.5rem" onclick="addQuotaSource()">+ Add Source Limit</button>
+
+          <h4 style="margin-top:1.25rem">Per-Model Call Limits</h4>
+          <div id="quota-model-list"></div>
+          <button class="btn btn--ghost btn--sm" style="margin-top:0.5rem" onclick="addQuotaModel()">+ Add Model Limit</button>
+
+          <h4 style="margin-top:1.25rem">Kill Switches</h4>
+          <div id="quota-kill-list"></div>
+          <button class="btn btn--ghost btn--sm" style="margin-top:0.5rem" onclick="addKillSwitch()">+ Add Kill Switch</button>
+
+          <div style="margin-top:1rem;display:flex;align-items:center;gap:1rem">
+            <button class="btn btn--primary btn--sm" onclick="saveQuotas()">Save Quotas</button>
+            <span id="quota-save-status" class="muted"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Model Routing</h3>
+          <p class="muted">Control how requests are routed across providers.</p>
+
+          <h4 style="margin-top:1rem">Model Aliases</h4>
+          <p class="muted">Transparently swap models — callers use the alias, proxy uses the real model.</p>
+          <div id="alias-list"></div>
+          <button class="btn btn--ghost btn--sm" style="margin-top:0.5rem" onclick="addAlias()">+ Add Alias</button>
+
+          <h4 style="margin-top:1.25rem">Fallback Chains</h4>
+          <p class="muted">On 5xx/429, retry with the next provider in the chain.</p>
+          <div id="fallback-list"></div>
+          <button class="btn btn--ghost btn--sm" style="margin-top:0.5rem" onclick="addFallback()">+ Add Chain</button>
+
+          <h4 style="margin-top:1.25rem">Weighted Load Balancing</h4>
+          <p class="muted">Split traffic for a source across models by percentage weight.</p>
+          <div id="weight-list"></div>
+          <button class="btn btn--ghost btn--sm" style="margin-top:0.5rem" onclick="addWeight()">+ Add Weight Rule</button>
+
+          <div style="margin-top:1rem;display:flex;align-items:center;gap:1rem">
+            <button class="btn btn--primary btn--sm" onclick="saveRouting()">Save Routing</button>
+            <span id="routing-save-status" class="muted"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Content Guardrails</h3>
+          <p class="muted">Scan prompts and responses for sensitive content. Warn logs the match; Block returns a 400 error.</p>
+
+          <div style="margin-top:0.75rem;display:flex;flex-direction:column;gap:0.5rem">
+            <label class="settings-row">
+              <span>PII Detection <span class="muted">(email, phone, SSN, credit card)</span></span>
+              <input type="checkbox" id="gr-pii-enabled">
+            </label>
+            <label class="settings-row">
+              <span>Prompt Injection Detection</span>
+              <input type="checkbox" id="gr-injection-enabled">
+            </label>
+            <label class="settings-row">
+              <span>Default Action</span>
+              <select id="gr-action" class="filter-input" style="width:100px">
+                <option value="warn">Warn</option>
+                <option value="block">Block</option>
+              </select>
+            </label>
+          </div>
+
+          <h4 style="margin-top:1.25rem">Custom Regex Rules</h4>
+          <div id="gr-custom-list"></div>
+          <button class="btn btn--ghost btn--sm" style="margin-top:0.5rem" onclick="addCustomRule()">+ Add Rule</button>
+
+          <div style="margin-top:1rem;display:flex;align-items:center;gap:1rem">
+            <button class="btn btn--primary btn--sm" onclick="saveGuardrails()">Save Guardrails</button>
+            <span id="gr-save-status" class="muted"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Custom Pricing <span class="muted" style="font-weight:normal;font-size:0.85em">($/MTok)</span></h3>
+          <div class="table-scroll" style="margin-top:0.75rem">
+            <table class="data-table" id="pricingTable">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Input</th>
+                  <th>Output</th>
+                  <th>Cache Read</th>
+                  <th>Cache Write</th>
+                </tr>
+              </thead>
+              <tbody id="pricingBody">
+                <tr><td colspan="5" class="table-empty">Loading&hellip;</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <button id="savePricing" class="btn btn--primary btn--sm" style="margin-top:0.75rem">Save Pricing</button>
+        </div>
+
+      </div>
+    </div>
+
     <!-- PAGE: Playground -->
     <div id="page-playground" class="page-content hidden">
       <div class="card" style="max-width:900px;margin:0 auto">
@@ -729,6 +737,6 @@
     </div>
   </footer>
 
-  <script src="/static/app.js?v=12"></script>
+  <script src="/static/app.js?v=13"></script>
 </body>
 </html>
