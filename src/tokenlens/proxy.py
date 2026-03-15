@@ -15,7 +15,7 @@ import httpx
 from fastapi.responses import Response
 
 from tokenlens.detector import ParsedProxy, parse_proxy_path
-from tokenlens.guardrails import parse_guardrail_config, scan_text
+from tokenlens.guardrails import parse_guardrail_config, scan_text, GuardrailConfig
 from tokenlens.heatmap import compute_heatmap
 from tokenlens.pricing import PricingTable
 from tokenlens.quotas import check_quotas
@@ -625,6 +625,7 @@ async def handle_proxy_request(
                 _history_ratio=_history_ratio,
                 _token_heatmap=_token_heatmap_json,
                 routing_config=routing_config,
+                _guardrail_config=gr_config,
             )
 
 
@@ -768,6 +769,7 @@ async def _handle_non_streaming(
     _history_ratio: float | None = None,
     _token_heatmap: str | None = None,
     routing_config: RoutingConfig | None = None,
+    _guardrail_config: GuardrailConfig | None = None,
 ) -> Response:
     # Retry logic for fallback chains
     providers_to_try = [parsed.provider]
@@ -792,6 +794,41 @@ async def _handle_non_streaming(
         # 5xx or 429: try next provider
     response_body = response.content
     response_headers = _filter_response_headers(dict(response.headers))
+
+    # Response-side guardrail scan (non-streaming only)
+    if response.is_success and _guardrail_config is not None:
+        try:
+            resp_data = json.loads(response_body)
+            # Extract text from response content
+            resp_text_parts: list[str] = []
+            # Anthropic format: content[].text
+            for block in (resp_data.get("content") or []):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    resp_text_parts.append(block.get("text", ""))
+            # OpenAI format: choices[].message.content
+            for choice in (resp_data.get("choices") or []):
+                msg = choice.get("message") or {}
+                if isinstance(msg.get("content"), str):
+                    resp_text_parts.append(msg["content"])
+            resp_full_text = " ".join(resp_text_parts)
+
+            if resp_full_text:
+                resp_matches = scan_text(resp_full_text, _guardrail_config)
+                resp_blocking = [m for m in resp_matches if m.action == "block"]
+                if resp_blocking:
+                    return Response(
+                        status_code=502,
+                        content=json.dumps({
+                            "error": "TokenLens response guardrail violation",
+                            "violations": [
+                                {"type": m.pattern_type, "name": m.pattern_name}
+                                for m in resp_blocking
+                            ],
+                        }).encode(),
+                        media_type="application/json",
+                    )
+        except (json.JSONDecodeError, ValueError):
+            pass  # Non-JSON response, skip guardrail scan
 
     if response.is_success:
         usage = extract_usage_from_response(response_body, parsed.provider)

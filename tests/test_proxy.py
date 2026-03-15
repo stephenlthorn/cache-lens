@@ -938,3 +938,53 @@ def test_proxy_blocks_when_guardrail_action_is_block():
     ))
     assert resp.status_code == 400
     assert b"guardrail" in resp.body.lower()
+
+
+def test_proxy_blocks_response_with_pii_when_guardrail_blocks(tmp_path):
+    """When the upstream response contains PII and guardrails are set to block, return 502."""
+    import asyncio
+    from tokenlens.store import UsageStore
+    from tokenlens.pricing import PricingTable
+
+    store = UsageStore(tmp_path / "test.db")
+    store.set_setting("guardrails.config", json.dumps({
+        "pii_enabled": True,
+        "injection_enabled": False,
+        "custom_patterns": [],
+        "action": "block",
+    }))
+    pricing = PricingTable()
+
+    # Upstream response contains PII in the model output
+    response_with_pii = json.dumps({
+        "model": "claude-sonnet-4-6",
+        "usage": {"input_tokens": 10, "output_tokens": 20,
+                  "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+        "content": [{"type": "text", "text": "The customer's email is user@example.com and SSN is 123-45-6789"}],
+    }).encode()
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        mock_response.status_code = 200
+        mock_response.content = response_with_pii
+        mock_response.headers = {"content-type": "application/json"}
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.request = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        resp = asyncio.run(handle_proxy_request(
+            path="/proxy/anthropic/test/v1/messages",
+            method="POST",
+            headers={"content-type": "application/json", "x-api-key": "test"},
+            body=b'{"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "Hello"}]}',
+            store=store,
+            pricing=pricing,
+        ))
+
+    # Should block the response and return 502 (bad gateway — upstream response was unsafe)
+    assert resp.status_code == 502
+    body = json.loads(resp.body)
+    assert "guardrail" in body.get("error", "").lower()
