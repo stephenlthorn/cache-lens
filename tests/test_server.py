@@ -1089,3 +1089,38 @@ def test_put_and_get_quotas(client: TestClient) -> None:
     data = resp.json()
     assert data["source_limits"]["my-agent"]["daily_limit_usd"] == 50.0
     assert data["kill_switches"] == ["bad-agent"]
+
+
+# ---------------------------------------------------------------------------
+# /api/config/routing (Task 2.5)
+# ---------------------------------------------------------------------------
+
+
+def test_get_routing_empty(client: TestClient) -> None:
+    """GET /api/config/routing returns empty config when nothing has been set."""
+    resp = client.get("/api/config/routing")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["aliases"] == {}
+    assert data["fallback_chains"] == {}
+    assert data["weights"] == {}
+
+
+def test_put_and_get_routing(client: TestClient) -> None:
+    """PUT /api/config/routing persists and GET /api/config/routing retrieves it."""
+    config = {
+        "aliases": {"gpt-4": "claude-sonnet-4-6"},
+        "fallback_chains": {"anthropic": ["openai"]},
+        "weights": {"my-agent": {"claude-haiku-4-5-20251001": 70, "claude-sonnet-4-6": 30}},
+    }
+    resp = client.put("/api/config/routing", json=config)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+    resp = client.get("/api/config/routing")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["aliases"]["gpt-4"] == "claude-sonnet-4-6"
+    assert data["fallback_chains"]["anthropic"] == ["openai"]
+    assert data["weights"]["my-agent"]["claude-haiku-4-5-20251001"] == 70
+    assert data["weights"]["my-agent"]["claude-sonnet-4-6"] == 30

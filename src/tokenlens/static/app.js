@@ -1355,6 +1355,7 @@ if (settingsToggle && settingsPanel) {
       await loadBudgetSettings();
       await loadPricingSettings();
       await loadQuotas();
+      await loadRouting();
     }
   });
 }
@@ -1809,6 +1810,141 @@ async function saveQuotas() {
         body: JSON.stringify({ source_limits, model_limits, kill_switches }),
     });
     const status = document.getElementById("quota-save-status");
+    status.textContent = resp.ok ? "Saved!" : "Error";
+    setTimeout(() => { status.textContent = ""; }, 2000);
+}
+
+// --- Routing Management ---
+let _routingConfig = { aliases: {}, fallback_chains: {}, weights: {} };
+
+async function loadRouting() {
+    try {
+        const resp = await fetch(`${BASE}/api/config/routing`);
+        _routingConfig = await resp.json();
+        renderAliases();
+        renderFallbacks();
+        renderWeights();
+    } catch (e) { console.error("Failed to load routing", e); }
+}
+
+function renderAliases() {
+    const container = document.getElementById("alias-list");
+    container.innerHTML = "";
+    for (const [from, to] of Object.entries(_routingConfig.aliases || {})) {
+        const row = document.createElement("div");
+        row.className = "flex gap-2 mb-2 items-center";
+        row.innerHTML = `
+            <input type="text" value="${from}" class="input-sm alias-from" placeholder="from model" style="width:160px">
+            <span class="muted">→</span>
+            <input type="text" value="${to}" class="input-sm alias-to" placeholder="to model" style="width:160px">
+            <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+        `;
+        container.appendChild(row);
+    }
+}
+
+function addAlias() {
+    const container = document.getElementById("alias-list");
+    const row = document.createElement("div");
+    row.className = "flex gap-2 mb-2 items-center";
+    row.innerHTML = `
+        <input type="text" class="input-sm alias-from" placeholder="from model" style="width:160px">
+        <span class="muted">→</span>
+        <input type="text" class="input-sm alias-to" placeholder="to model" style="width:160px">
+        <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+    `;
+    container.appendChild(row);
+}
+
+function renderFallbacks() {
+    const container = document.getElementById("fallback-list");
+    container.innerHTML = "";
+    for (const [provider, chain] of Object.entries(_routingConfig.fallback_chains || {})) {
+        const row = document.createElement("div");
+        row.className = "flex gap-2 mb-2 items-center";
+        row.innerHTML = `
+            <input type="text" value="${provider}" class="input-sm fallback-provider" placeholder="primary" style="width:120px">
+            <span class="muted">→</span>
+            <input type="text" value="${chain.join(', ')}" class="input-sm fallback-chain" placeholder="fallback1, fallback2" style="width:200px">
+            <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+        `;
+        container.appendChild(row);
+    }
+}
+
+function addFallback() {
+    const container = document.getElementById("fallback-list");
+    const row = document.createElement("div");
+    row.className = "flex gap-2 mb-2 items-center";
+    row.innerHTML = `
+        <input type="text" class="input-sm fallback-provider" placeholder="primary" style="width:120px">
+        <span class="muted">→</span>
+        <input type="text" class="input-sm fallback-chain" placeholder="fallback1, fallback2" style="width:200px">
+        <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+    `;
+    container.appendChild(row);
+}
+
+function renderWeights() {
+    const container = document.getElementById("weight-list");
+    container.innerHTML = "";
+    for (const [source, models] of Object.entries(_routingConfig.weights || {})) {
+        const pairs = Object.entries(models).map(([m, w]) => `${m}:${w}`).join(", ");
+        const row = document.createElement("div");
+        row.className = "flex gap-2 mb-2 items-center";
+        row.innerHTML = `
+            <input type="text" value="${source}" class="input-sm weight-source" placeholder="source" style="width:120px">
+            <input type="text" value="${pairs}" class="input-sm weight-models" placeholder="model1:70, model2:30" style="width:260px">
+            <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+        `;
+        container.appendChild(row);
+    }
+}
+
+function addWeight() {
+    const container = document.getElementById("weight-list");
+    const row = document.createElement("div");
+    row.className = "flex gap-2 mb-2 items-center";
+    row.innerHTML = `
+        <input type="text" class="input-sm weight-source" placeholder="source" style="width:120px">
+        <input type="text" class="input-sm weight-models" placeholder="model1:70, model2:30" style="width:260px">
+        <button class="btn btn-sm btn-ghost" onclick="this.parentElement.remove()">✕</button>
+    `;
+    container.appendChild(row);
+}
+
+async function saveRouting() {
+    const aliases = {};
+    document.querySelectorAll("#alias-list > div").forEach(row => {
+        const from = row.querySelector(".alias-from").value.trim();
+        const to = row.querySelector(".alias-to").value.trim();
+        if (from && to) aliases[from] = to;
+    });
+
+    const fallback_chains = {};
+    document.querySelectorAll("#fallback-list > div").forEach(row => {
+        const provider = row.querySelector(".fallback-provider").value.trim();
+        const chain = row.querySelector(".fallback-chain").value.split(",").map(s => s.trim()).filter(Boolean);
+        if (provider && chain.length) fallback_chains[provider] = chain;
+    });
+
+    const weights = {};
+    document.querySelectorAll("#weight-list > div").forEach(row => {
+        const source = row.querySelector(".weight-source").value.trim();
+        const models = {};
+        row.querySelector(".weight-models").value.split(",").forEach(pair => {
+            const [model, weight] = pair.split(":").map(s => s.trim());
+            if (model && weight) models[model] = parseInt(weight);
+        });
+        if (source && Object.keys(models).length) weights[source] = models;
+    });
+
+    const resp = await fetch(`${BASE}/api/config/routing`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ aliases, fallback_chains, weights }),
+    });
+    const status = document.getElementById("routing-save-status");
     status.textContent = resp.ok ? "Saved!" : "Error";
     setTimeout(() => { status.textContent = ""; }, 2000);
 }

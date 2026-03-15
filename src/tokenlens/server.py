@@ -674,6 +674,39 @@ def create_app(
         s.set_setting("quotas.config", json.dumps(config))
         return JSONResponse(content={"status": "ok"})
 
+    # ------------------------------------------------------------------
+    # Settings: Routing (model aliases, fallback chains, weighted balancing)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/config/routing")
+    def api_get_routing(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        config_str = s.get_setting("routing.config")
+        if config_str:
+            try:
+                config = json.loads(config_str)
+            except (json.JSONDecodeError, ValueError):
+                config = {}
+        else:
+            config = {}
+        return JSONResponse(content={
+            "aliases": config.get("aliases", {}),
+            "fallback_chains": config.get("fallback_chains", {}),
+            "weights": config.get("weights", {}),
+        })
+
+    @app.put("/api/config/routing")
+    async def api_set_routing(request: Request) -> JSONResponse:
+        s: UsageStore = request.app.state.store
+        body = await request.json()
+        config = {
+            "aliases": body.get("aliases", {}),
+            "fallback_chains": body.get("fallback_chains", {}),
+            "weights": body.get("weights", {}),
+        }
+        s.set_setting("routing.config", json.dumps(config))
+        return JSONResponse(content={"status": "ok"})
+
     # --- Custom Pricing ---
 
     @app.get("/api/settings/pricing")

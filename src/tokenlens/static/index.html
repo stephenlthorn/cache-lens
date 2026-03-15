@@ -120,6 +120,28 @@
             <button class="btn btn-primary" style="margin-top:1rem" onclick="saveQuotas()">Save Quotas</button>
             <span id="quota-save-status" class="muted"></span>
         </div>
+        <!-- Routing -->
+        <div class="settings-section">
+            <h3>Model Routing</h3>
+
+            <h4>Model Aliases</h4>
+            <p class="muted">Transparently swap models. Requests for the "from" model will use the "to" model.</p>
+            <div id="alias-list"></div>
+            <button class="btn btn-sm" onclick="addAlias()">+ Add Alias</button>
+
+            <h4 style="margin-top:1rem">Fallback Chains</h4>
+            <p class="muted">If a provider returns 5xx/429, try the next provider in the chain.</p>
+            <div id="fallback-list"></div>
+            <button class="btn btn-sm" onclick="addFallback()">+ Add Chain</button>
+
+            <h4 style="margin-top:1rem">Weighted Load Balancing</h4>
+            <p class="muted">Split traffic for a source across models by weight (e.g., 70% Haiku / 30% Sonnet).</p>
+            <div id="weight-list"></div>
+            <button class="btn btn-sm" onclick="addWeight()">+ Add Weight Rule</button>
+
+            <button class="btn btn-primary" style="margin-top:1rem" onclick="saveRouting()">Save Routing</button>
+            <span id="routing-save-status" class="muted"></span>
+        </div>
         <div class="settings-section">
           <h4>Custom Pricing ($/MTok)</h4>
           <div class="table-scroll">
