@@ -843,3 +843,66 @@ def test_proxy_applies_model_alias():
     assert len(captured_bodies) > 0
     forwarded = json.loads(captured_bodies[0])
     assert forwarded["model"] == "claude-sonnet-4-6"
+
+
+def test_proxy_retries_on_529_with_fallback_chain(tmp_path):
+    """When Anthropic returns 529, proxy retries with the fallback provider (OpenAI)."""
+    import asyncio
+    from tokenlens.store import UsageStore
+    from tokenlens.pricing import PricingTable
+
+    store = UsageStore(tmp_path / "test.db")
+    store.set_setting("routing.config", json.dumps({
+        "aliases": {},
+        "fallback_chains": {"anthropic": ["openai"]},
+        "weights": {},
+    }))
+    pricing = PricingTable()
+
+    call_urls = []
+
+    # First call (anthropic) returns 529, second call (openai) returns 200
+    responses = [
+        MagicMock(
+            status_code=529,
+            content=b'{"error": "overloaded"}',
+            headers={},
+            is_success=False,
+        ),
+        MagicMock(
+            status_code=200,
+            content=b'{"usage": {"prompt_tokens": 10, "completion_tokens": 5}, "model": "gpt-4o", "choices": []}',
+            headers={"content-type": "application/json"},
+            is_success=True,
+        ),
+    ]
+    call_count = 0
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        async def track_request(method, url, *, headers=None, content=None):
+            nonlocal call_count
+            call_urls.append(url)
+            resp = responses[call_count]
+            call_count += 1
+            return resp
+
+        mock_client.request = track_request
+        mock_client_cls.return_value = mock_client
+
+        resp = asyncio.run(handle_proxy_request(
+            path="/proxy/anthropic/test/v1/messages",
+            method="POST",
+            headers={"content-type": "application/json", "x-api-key": "test"},
+            body=b'{"model": "claude-sonnet-4-6", "messages": []}',
+            store=store,
+            pricing=pricing,
+        ))
+
+    assert resp.status_code == 200
+    assert len(call_urls) == 2
+    assert "api.anthropic.com" in call_urls[0]
+    assert "api.openai.com" in call_urls[1]

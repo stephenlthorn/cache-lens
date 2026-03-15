@@ -18,7 +18,7 @@ from tokenlens.detector import ParsedProxy, parse_proxy_path
 from tokenlens.heatmap import compute_heatmap
 from tokenlens.pricing import PricingTable
 from tokenlens.quotas import check_quotas
-from tokenlens.router import parse_routing_config, resolve_model_alias, select_weighted_model
+from tokenlens.router import RoutingConfig, parse_routing_config, resolve_model_alias, select_weighted_model
 from tokenlens.store import UsageStore
 from tokenlens.waste_detector import detect_waste, WasteItem
 
@@ -585,6 +585,7 @@ async def handle_proxy_request(
                 _history_tokens=_history_tokens,
                 _history_ratio=_history_ratio,
                 _token_heatmap=_token_heatmap_json,
+                routing_config=routing_config,
             )
 
 
@@ -727,10 +728,29 @@ async def _handle_non_streaming(
     _history_tokens: int | None = None,
     _history_ratio: float | None = None,
     _token_heatmap: str | None = None,
+    routing_config: RoutingConfig | None = None,
 ) -> Response:
-    t0 = time.time()
-    response = await client.request(method, url, headers=headers, content=body)
-    latency_ms = (time.time() - t0) * 1000
+    # Retry logic for fallback chains
+    providers_to_try = [parsed.provider]
+    if routing_config is not None:
+        chain = routing_config.fallback_chains.get(parsed.provider, [])
+        providers_to_try = [parsed.provider] + chain
+
+    response = None
+    latency_ms = 0.0
+    for attempt_provider in providers_to_try:
+        attempt_base = PROVIDER_URLS.get(attempt_provider)
+        if attempt_base is None:
+            continue
+        attempt_url = attempt_base + endpoint
+        t0 = time.time()
+        response = await client.request(method, attempt_url, headers=headers, content=body)
+        latency_ms = (time.time() - t0) * 1000
+
+        # If success or client error (4xx, not 429), stop retrying
+        if response.status_code < 500 and response.status_code != 429:
+            break
+        # 5xx or 429: try next provider
     response_body = response.content
     response_headers = _filter_response_headers(dict(response.headers))
 
