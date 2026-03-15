@@ -17,6 +17,7 @@ from fastapi.responses import Response
 from tokenlens.detector import ParsedProxy, parse_proxy_path
 from tokenlens.heatmap import compute_heatmap
 from tokenlens.pricing import PricingTable
+from tokenlens.quotas import check_quotas
 from tokenlens.store import UsageStore
 from tokenlens.waste_detector import detect_waste, WasteItem
 
@@ -461,6 +462,35 @@ async def handle_proxy_request(
             _token_heatmap_json = json.dumps(hm)
         except Exception:
             pass
+
+    # Quota enforcement (per-source + per-model limits)
+    # Uses parsed.source (from parse_proxy_path) and parsed_body (JSON body)
+    quota_config_str = store.get_setting("quotas.config")
+    if quota_config_str:
+        try:
+            quota_config = json.loads(quota_config_str)
+        except (json.JSONDecodeError, ValueError):
+            quota_config = None
+
+        if quota_config:
+            req_model = (parsed_body or {}).get("model", "unknown")
+            quota_result = check_quotas(
+                config=quota_config,
+                source=parsed.source,
+                model=req_model,
+                source_daily_spend=store.daily_spend_by_source(parsed.source),
+                source_monthly_spend=store.monthly_spend_by_source(parsed.source),
+                model_calls_today=store.model_call_count_today(req_model),
+            )
+            if not quota_result.allowed:
+                return Response(
+                    status_code=429,
+                    content=json.dumps({
+                        "error": f"TokenLens quota exceeded: {quota_result.reason}",
+                    }).encode(),
+                    media_type="application/json",
+                    headers={"Retry-After": str(quota_result.retry_after)},
+                )
 
     # Determine streaming: Google uses path (streamGenerateContent), others use body
     if parsed.provider == "google":

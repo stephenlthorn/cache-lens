@@ -11,6 +11,7 @@ from tokenlens.proxy import (
     _record_call,
     extract_usage_from_response,
     extract_usage_from_sse_chunks,
+    handle_proxy_request,
     is_streaming_request,
     sha256_request,
 )
@@ -757,3 +758,35 @@ def test_proxy_history_metrics_list_content(tmp_path):
     # history_ratio should be between 0 and 1
     assert 0 <= history_ratio <= 1, \
         f"history_ratio should be between 0 and 1, got {history_ratio}"
+
+
+# ---------------------------------------------------------------------------
+# Quota enforcement — kill switch
+# ---------------------------------------------------------------------------
+
+def test_proxy_blocks_killed_source():
+    """Proxy returns 429 when source is on the kill switch list."""
+    import asyncio
+
+    store = MagicMock()
+    store.get_setting.side_effect = lambda key: {
+        "budget.enabled": "false",
+        "quotas.config": '{"kill_switches": ["bad-agent"], "source_limits": {}, "model_limits": {}}',
+        "dedup.enabled": "false",
+    }.get(key)
+    store.daily_spend_by_source.return_value = 0.0
+    store.monthly_spend_by_source.return_value = 0.0
+    store.model_call_count_today.return_value = 0
+
+    pricing = MagicMock()
+
+    resp = asyncio.run(handle_proxy_request(
+        path="/proxy/anthropic/bad-agent/v1/messages",
+        method="POST",
+        headers={"content-type": "application/json"},
+        body=b'{"model": "claude-sonnet-4-6", "messages": []}',
+        store=store,
+        pricing=pricing,
+    ))
+    assert resp.status_code == 429
+    assert b"kill switch" in resp.body
