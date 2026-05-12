@@ -27,10 +27,23 @@ from tokenlens.waste_detector import detect_waste, WasteItem
 # Provider base URLs
 # ---------------------------------------------------------------------------
 
+import os as _tl_os  # TOKENLENS_ENV_OVERRIDE_PATCH_V1
+
+
+def _tl_upstream(env_name: str, default_url: str) -> str:  # TOKENLENS_ENV_OVERRIDE_PATCH_V1
+    """Allow runtime override of upstream provider URLs via environment.
+
+    Useful for OpenAI-compatible relay gateways or on-prem deployments,
+    so users do not need to patch source to switch upstreams.
+    """
+    val = _tl_os.environ.get(env_name)
+    return val.strip().rstrip("/") if val else default_url
+
+
 PROVIDER_URLS: dict[str, str] = {
-    "anthropic": "https://api.anthropic.com",
-    "openai": "https://api.openai.com",
-    "google": "https://generativelanguage.googleapis.com",
+    "anthropic": _tl_upstream("TOKENLENS_ANTHROPIC_UPSTREAM", "https://api.anthropic.com"),
+    "openai": _tl_upstream("TOKENLENS_OPENAI_UPSTREAM", "https://api.openai.com"),
+    "google": _tl_upstream("TOKENLENS_GOOGLE_UPSTREAM", "https://generativelanguage.googleapis.com"),
 }
 
 # Hop-by-hop headers that must not be forwarded upstream
